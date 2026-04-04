@@ -9,6 +9,8 @@
   --text-main: #e5e7eb;
   --text-muted: #9ca3af;
   --shadow-soft: rgba(2, 6, 23, 0.7);
+  --safe-area-top: env(safe-area-inset-top, 0px);
+  --safe-area-bottom: env(safe-area-inset-bottom, 0px);
 }
 
 html {
@@ -33,6 +35,26 @@ body.app-loading {
     linear-gradient(180deg, rgba(15, 23, 42, 0.96), rgba(2, 6, 23, 0.98)) !important;
   color: var(--text-main);
   box-shadow: 0 24px 72px var(--shadow-soft);
+}
+
+.safe-top-4 {
+  padding-top: calc(1rem + var(--safe-area-top)) !important;
+}
+
+.safe-top-5 {
+  padding-top: calc(1.25rem + var(--safe-area-top)) !important;
+}
+
+.safe-top-offset-5 {
+  top: calc(1.25rem + var(--safe-area-top)) !important;
+}
+
+.safe-bottom-nav {
+  padding-bottom: calc(0.75rem + var(--safe-area-bottom)) !important;
+}
+
+.safe-bottom-4 {
+  padding-bottom: calc(1rem + var(--safe-area-bottom)) !important;
 }
 
 @media (min-width: 768px) {
