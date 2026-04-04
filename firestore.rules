@@ -35,11 +35,14 @@ service cloud.firestore {
     function validOpportunityCounters() {
       return request.resource.data.savesCount >= 0
         && request.resource.data.appliedCount >= 0
+        && request.resource.data.likesCount >= 0
         && request.resource.data.viewsCount >= 0
         && request.resource.data.savesCount >= resource.data.savesCount - 1
         && request.resource.data.savesCount <= resource.data.savesCount + 1
         && request.resource.data.appliedCount >= resource.data.appliedCount - 1
         && request.resource.data.appliedCount <= resource.data.appliedCount + 1
+        && request.resource.data.likesCount >= resource.data.likesCount - 1
+        && request.resource.data.likesCount <= resource.data.likesCount + 1
         && request.resource.data.viewsCount >= resource.data.viewsCount
         && request.resource.data.viewsCount <= resource.data.viewsCount + 1;
     }
@@ -102,6 +105,7 @@ service cloud.firestore {
           && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
             'savesCount',
             'appliedCount',
+            'likesCount',
             'viewsCount',
             'updatedAt'
           ])

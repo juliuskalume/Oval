@@ -784,6 +784,7 @@ async function updateSavedState(opportunity, desiredSaved) {
         ...opportunitySnapshot(opportunity),
         saved: desiredSaved,
         applied: Boolean(current.applied),
+        liked: Boolean(current.liked),
         createdAt: current.createdAt || Timestamp.now(),
         updatedAt: Timestamp.now(),
       },
@@ -818,6 +819,7 @@ async function updateAppliedState(opportunity, desiredApplied) {
         ...opportunitySnapshot(opportunity),
         saved: Boolean(current.saved),
         applied: desiredApplied,
+        liked: Boolean(current.liked),
         appliedAt: desiredApplied ? Timestamp.now() : null,
         createdAt: current.createdAt || Timestamp.now(),
         updatedAt: Timestamp.now(),
@@ -841,6 +843,41 @@ async function updateAppliedState(opportunity, desiredApplied) {
       opportunityId: opportunity.id,
     });
   }
+}
+
+async function updateLikedState(opportunity, desiredLiked) {
+  const user = await requireUserForAction();
+  const stateRef = doc(db, "users", user.uid, "states", opportunity.id);
+  const opportunityRef = doc(db, "opportunities", opportunity.id);
+
+  await runTransaction(db, async (transaction) => {
+    const stateSnapshot = await transaction.get(stateRef);
+    const opportunitySnapshotRef = await transaction.get(opportunityRef);
+    const current = stateSnapshot.exists() ? stateSnapshot.data() : {};
+    const currentLiked = Boolean(current.liked);
+    if (currentLiked === desiredLiked) {
+      return;
+    }
+    transaction.set(
+      stateRef,
+      {
+        ...opportunitySnapshot(opportunity),
+        saved: Boolean(current.saved),
+        applied: Boolean(current.applied),
+        liked: desiredLiked,
+        createdAt: current.createdAt || Timestamp.now(),
+        updatedAt: Timestamp.now(),
+      },
+      { merge: true },
+    );
+    if (opportunitySnapshotRef.exists()) {
+      const nextLikes = Math.max((opportunitySnapshotRef.data()?.likesCount || 0) + (desiredLiked ? 1 : -1), 0);
+      transaction.update(opportunityRef, {
+        likesCount: nextLikes,
+        updatedAt: Timestamp.now(),
+      });
+    }
+  });
 }
 
 async function recordView(opportunityId) {
@@ -922,6 +959,16 @@ function paintAppliedActionButton(button, applied) {
   button.textContent = applied ? "Applied" : "Mark Applied";
 }
 
+function paintLikeActionButton(button, liked, likesCount) {
+  if (!button) {
+    return;
+  }
+  button.innerHTML = `
+    <span class="material-symbols-outlined text-[30px]">${liked ? "favorite" : "favorite_border"}</span>
+    <span class="text-xs mt-1">${escapeHtml(formatCompact(likesCount || 0))}</span>
+  `;
+}
+
 function paintVideoAudioButton(button, muted) {
   if (!button) {
     return;
@@ -954,19 +1001,19 @@ function renderFeedSlide(opportunity, state = {}) {
   const showAudioToggle = isVideoKind(opportunityMediaKind(opportunity));
   return `
     <section class="relative min-h-screen snap-start" data-opportunity-id="${escapeHtml(opportunity.id)}">
-      <div class="absolute inset-0">
+      <div class="absolute inset-0 pointer-events-none">
         ${renderOpportunityMedia(opportunity, "w-full h-full object-cover", { muted: true, loop: true, autoplay: true })}
         <div class="absolute inset-0 bg-gradient-to-t from-black/85 via-black/10 to-black/45"></div>
       </div>
       <div class="relative min-h-screen px-4">
-        <div class="absolute right-3 bottom-28 z-20 flex flex-col items-center gap-5">
+        <div class="absolute right-3 bottom-28 z-20 flex flex-col items-center gap-5 pointer-events-auto">
           <div class="flex flex-col items-center">
             <img src="${escapeHtml(creatorAvatar(opportunity))}" class="w-12 h-12 rounded-full border-2 border-white object-cover" alt="${escapeHtml(opportunity.creatorName)}">
           </div>
-          <div class="flex flex-col items-center">
-            <span class="material-symbols-outlined text-[30px]">favorite</span>
+          <button type="button" class="flex flex-col items-center" data-action="toggle-like" data-id="${escapeHtml(opportunity.id)}">
+            <span class="material-symbols-outlined text-[30px]">${state.liked ? "favorite" : "favorite_border"}</span>
             <span class="text-xs mt-1">${escapeHtml(formatCompact(opportunity.likesCount || 0))}</span>
-          </div>
+          </button>
           <a href="${commentsUrl(opportunity.id)}" class="flex flex-col items-center">
             <span class="material-symbols-outlined text-[30px]">chat_bubble</span>
             <span class="text-xs mt-1">${escapeHtml(formatCompact(opportunity.commentsCount || 0))}</span>
@@ -1039,11 +1086,30 @@ async function bindOpportunityActionButtons(container, opportunities, states, us
           ...current,
           ...opportunitySnapshot(opportunity),
           saved: !current.saved,
+          liked: Boolean(current.liked),
         };
         states.set(opportunity.id, nextState);
         paintSaveActionButton(button, !current.saved);
         window.dispatchEvent(new CustomEvent("oval:state-changed", { detail: { opportunityId: opportunity.id, state: nextState } }));
         setStatus(statusTarget, current.saved ? "Removed from saved." : "Saved for later.", "success");
+        return;
+      }
+
+      if (action === "toggle-like") {
+        const current = states.get(opportunity.id) || {};
+        const nextLiked = !current.liked;
+        await updateLikedState(opportunity, nextLiked);
+        opportunity.likesCount = Math.max(Number(opportunity.likesCount || 0) + (nextLiked ? 1 : -1), 0);
+        const nextState = {
+          ...current,
+          ...opportunitySnapshot(opportunity),
+          liked: nextLiked,
+          saved: Boolean(current.saved),
+          applied: Boolean(current.applied),
+        };
+        states.set(opportunity.id, nextState);
+        paintLikeActionButton(button, nextLiked, opportunity.likesCount);
+        setStatus(statusTarget, nextLiked ? "Added to likes." : "Removed from likes.", "success");
         return;
       }
 
@@ -1054,6 +1120,7 @@ async function bindOpportunityActionButtons(container, opportunities, states, us
           ...current,
           ...opportunitySnapshot(opportunity),
           saved: false,
+          liked: Boolean(current.liked),
         });
         window.dispatchEvent(new CustomEvent("oval:state-changed", { detail: { opportunityId: opportunity.id, state: states.get(opportunity.id) } }));
         button.closest(".rounded-3xl")?.remove();
@@ -1068,6 +1135,7 @@ async function bindOpportunityActionButtons(container, opportunities, states, us
           ...current,
           ...opportunitySnapshot(opportunity),
           applied: !current.applied,
+          liked: Boolean(current.liked),
         };
         states.set(opportunity.id, nextState);
         paintAppliedActionButton(button, !current.applied);
