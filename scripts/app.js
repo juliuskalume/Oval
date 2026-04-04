@@ -152,7 +152,6 @@ function ensureAppLoader() {
         <div class="app-loader__core">
           <span class="app-loader__wordmark">OVAL</span>
         </div>
-        <div class="app-loader__caption">Loading your next move</div>
       </div>
     `;
     document.body.appendChild(loader);
