@@ -992,7 +992,7 @@ function paintVideoAudioButton(button, muted) {
   const icon = qs("[data-audio-icon]", button);
   const label = qs("[data-audio-label]", button);
   if (icon) {
-    icon.textContent = muted ? "volume_up" : "volume_off";
+    icon.textContent = muted ? "volume_off" : "volume_up";
   }
   if (label) {
     label.textContent = muted ? "Sound" : "Mute";
@@ -1044,7 +1044,7 @@ function renderFeedSlide(opportunity, state = {}) {
           </button>
           ${showAudioToggle ? `
             <button type="button" class="flex flex-col items-center" data-action="toggle-video-audio" data-id="${escapeHtml(opportunity.id)}" data-video-audio-button>
-              <span class="material-symbols-outlined text-[30px]" data-audio-icon>${muted ? "volume_up" : "volume_off"}</span>
+              <span class="material-symbols-outlined text-[30px]" data-audio-icon>${muted ? "volume_off" : "volume_up"}</span>
               <span class="text-xs mt-1" data-audio-label>${muted ? "Sound" : "Mute"}</span>
             </button>
           ` : ""}
