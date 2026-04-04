@@ -807,7 +807,7 @@ function renderOpportunityListCard(opportunity, state = {}, options = {}) {
     ? `
       <div class="mt-4 flex flex-wrap gap-2">
         ${options.showDetails !== false ? `<a href="${detailsUrl(opportunity.id)}" class="px-4 py-2 rounded-xl bg-white text-black text-sm font-semibold">Details</a>` : ""}
-        ${options.showApply ? `<button type="button" class="px-4 py-2 rounded-xl bg-white text-black text-sm font-semibold" data-action="apply" data-id="${escapeHtml(opportunity.id)}">Apply</button>` : ""}
+        ${options.showApply ? `<button type="button" class="px-4 py-2 rounded-xl bg-white text-black text-sm font-semibold" data-action="apply" data-id="${escapeHtml(opportunity.id)}">Visit Website</button>` : ""}
         ${options.showApplied ? `<button type="button" class="px-4 py-2 rounded-xl bg-white/10 text-white text-sm font-semibold border border-white/10" data-action="toggle-applied" data-id="${escapeHtml(opportunity.id)}">${state.applied ? "Applied" : "Mark Applied"}</button>` : ""}
         ${options.showSave ? `<button type="button" class="px-4 py-2 rounded-xl bg-white/10 text-white text-sm font-semibold border border-white/10" data-action="toggle-save" data-id="${escapeHtml(opportunity.id)}">${state.saved ? "Saved" : "Save"}</button>` : ""}
         ${options.showRemove ? `<button type="button" class="px-4 py-2 rounded-xl bg-white/10 text-white text-sm font-semibold border border-white/10" data-action="remove-save" data-id="${escapeHtml(opportunity.id)}">Remove</button>` : ""}
@@ -870,7 +870,7 @@ async function bindOpportunityActionButtons(container, opportunities, states, us
       if (action === "apply") {
         if (opportunity.applyUrl) {
           window.open(opportunity.applyUrl, "_blank", "noopener,noreferrer");
-          setStatus(statusTarget, "External application opened. Mark it as applied when you finish.", "success");
+          setStatus(statusTarget, "Website opened. Mark it as applied when you finish.", "success");
         }
         return;
       }
@@ -1150,8 +1150,8 @@ async function initDetails(user) {
     if (appliedButton) {
       appliedButton.textContent = savedState.applied ? "Applied" : "Mark Applied";
       appliedButton.className = savedState.applied
-        ? "flex-1 h-14 rounded-2xl bg-emerald-500/20 text-emerald-100 border border-emerald-400/30 font-semibold"
-        : "flex-1 h-14 rounded-2xl bg-white/10 text-white border border-white/10 font-semibold";
+        ? "mt-3 w-full h-12 rounded-2xl bg-emerald-500/20 text-emerald-100 border border-emerald-400/30 font-semibold"
+        : "mt-3 w-full h-12 rounded-2xl bg-white/10 text-white border border-white/10 font-semibold";
     }
   }
 
@@ -1177,7 +1177,7 @@ async function initDetails(user) {
     applyButton.addEventListener("click", () => {
       if (opportunity.applyUrl) {
         window.open(opportunity.applyUrl, "_blank", "noopener,noreferrer");
-        setStatus(status, "External application opened. When you finish, tap Mark Applied.", "success");
+        setStatus(status, "Website opened. When you finish, tap Mark Applied.", "success");
       }
     });
   }
