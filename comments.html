@@ -9,101 +9,50 @@
   <link rel="stylesheet" href="styles/material-symbols.css" />
   <style>
     body { font-family: Inter, sans-serif; }
-    .phone { max-width: 390px; margin: 0 auto; min-height: 100vh; background: #000; position: relative; overflow: hidden; }
-    .glass { background: rgba(0,0,0,.6); backdrop-filter: blur(12px); }
-    .chip { border: 1px solid rgba(255,255,255,.12); background: rgba(255,255,255,.06); }
-    .active-chip { background: white; color: black; }
+    .phone { max-width: 430px; margin: 0 auto; min-height: 100vh; background: #000; position: relative; overflow: hidden; }
     .material-symbols-outlined { font-variation-settings: 'FILL' 0, 'wght' 500, 'GRAD' 0, 'opsz' 24; }
     .hide-scrollbar::-webkit-scrollbar { display: none; }
     .hide-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
   </style>
   <link rel="stylesheet" href="styles/theme.css" />
-  
 </head>
-<body class="bg-black min-h-screen text-white">
+<body data-page="comments" class="bg-black min-h-screen text-white">
   <div class="phone flex flex-col bg-zinc-950">
-    <div class="px-4 pb-4 safe-top-4 border-b border-white/10 flex items-center justify-between">
-      <a href="feed.html" class="w-10 h-10 rounded-full bg-white/5 flex items-center justify-center">
+    <div class="px-4 pb-4 safe-top-4 border-b border-white/10 flex items-center justify-between gap-3">
+      <a id="commentsBackLink" href="feed.html" class="w-10 h-10 rounded-full bg-white/5 flex items-center justify-center">
         <span class="material-symbols-outlined">arrow_back</span>
       </a>
-      <h1 class="font-semibold">642 comments</h1>
-      <button class="w-10 h-10 rounded-full bg-white/5 flex items-center justify-center">
-        <span class="material-symbols-outlined">more_horiz</span>
-      </button>
+      <div class="flex-1 text-center min-w-0">
+        <h1 id="commentsHeading" class="font-semibold">Comments</h1>
+        <p id="commentsSubheading" class="text-xs text-white/50 mt-1 truncate"></p>
+      </div>
+      <div class="w-10 h-10"></div>
     </div>
 
-    <div class="flex-1 overflow-y-auto px-4 py-4 space-y-5 hide-scrollbar">
-      <div class="flex gap-3">
-        <img src="https://i.pravatar.cc/100?img=1" class="w-10 h-10 rounded-full" alt="User avatar">
-        <div class="flex-1">
-          <div class="flex items-center gap-2">
-            <p class="text-sm font-semibold text-white/90">@selin.dev</p>
-            <span class="text-xs text-white/40">2h</span>
-          </div>
-          <p class="text-sm text-white/80 mt-1">Is this role open to fresh graduates?</p>
-          <div class="flex items-center gap-4 mt-2 text-xs text-white/50">
-            <button>Reply</button>
-            <button>Like</button>
-          </div>
-        </div>
-        <button class="text-white/60 text-sm flex items-start gap-1"><span class="material-symbols-outlined text-[16px]">favorite</span>1.2K</button>
-      </div>
-<div class="flex gap-3">
-        <img src="https://i.pravatar.cc/100?img=5" class="w-10 h-10 rounded-full" alt="User avatar">
-        <div class="flex-1">
-          <div class="flex items-center gap-2">
-            <p class="text-sm font-semibold text-white/90">@mert.codes</p>
-            <span class="text-xs text-white/40">1h</span>
-          </div>
-          <p class="text-sm text-white/80 mt-1">Do you require React experience or is JavaScript enough?</p>
-          <div class="flex items-center gap-4 mt-2 text-xs text-white/50">
-            <button>Reply</button>
-            <button>Like</button>
-          </div>
-        </div>
-        <button class="text-white/60 text-sm flex items-start gap-1"><span class="material-symbols-outlined text-[16px]">favorite</span>284</button>
-      </div>
-<div class="flex gap-3">
-        <img src="https://i.pravatar.cc/100?img=9" class="w-10 h-10 rounded-full" alt="User avatar">
-        <div class="flex-1">
-          <div class="flex items-center gap-2">
-            <p class="text-sm font-semibold text-white/90">@careercoachnora</p>
-            <span class="text-xs text-white/40">56m</span>
-          </div>
-          <p class="text-sm text-white/80 mt-1">This is a solid entry-level opportunity. Nice to see salary transparency.</p>
-          <div class="flex items-center gap-4 mt-2 text-xs text-white/50">
-            <button>Reply</button>
-            <button>Like</button>
-          </div>
-        </div>
-        <button class="text-white/60 text-sm flex items-start gap-1"><span class="material-symbols-outlined text-[16px]">favorite</span>77</button>
-      </div>
-<div class="flex gap-3">
-        <img src="https://i.pravatar.cc/100?img=12" class="w-10 h-10 rounded-full" alt="User avatar">
-        <div class="flex-1">
-          <div class="flex items-center gap-2">
-            <p class="text-sm font-semibold text-white/90">@remotefirsthq</p>
-            <span class="text-xs text-white/40">20m</span>
-          </div>
-          <p class="text-sm text-white/80 mt-1">Yes, fresh grads can apply. Basic JavaScript + portfolio is enough.</p>
-          <div class="flex items-center gap-4 mt-2 text-xs text-white/50">
-            <button>Reply</button>
-            <button>Like</button>
-          </div>
-        </div>
-        <button class="text-white/60 text-sm flex items-start gap-1"><span class="material-symbols-outlined text-[16px]">favorite</span>41</button>
-      </div>
+    <div class="flex-1 overflow-y-auto px-4 py-4 pb-48 space-y-4 hide-scrollbar">
+      <div id="commentsStatus" class="hidden"></div>
+      <div id="commentsOpportunityCard" class="hidden rounded-3xl bg-white/5 border border-white/10 p-4"></div>
+      <div id="commentsList" class="space-y-4"></div>
     </div>
 
-    <div class="border-t border-white/10 p-3">
-      <div class="flex items-center gap-3">
-        <img src="https://i.pravatar.cc/100?img=15" class="w-9 h-9 rounded-full" alt="Your avatar">
-        <div class="flex-1 bg-white/10 rounded-full px-4 py-3 text-sm text-white/50 flex items-center justify-between">
-          <span>Ask a question...</span>
-          <span class="material-symbols-outlined text-[18px]">mood</span>
+    <div class="border-t border-white/10 px-4 pt-3 safe-bottom-4 bg-black/90 backdrop-blur">
+      <div id="commentsComposerGate" class="hidden"></div>
+      <form id="commentForm" class="space-y-3">
+        <div id="commentReplyBanner" class="hidden"></div>
+        <div class="flex items-end gap-3">
+          <img id="commentAuthorAvatar" src="" class="w-10 h-10 rounded-full object-cover" alt="Your avatar" />
+          <div class="flex-1 rounded-3xl bg-white/10 border border-white/10 px-4 py-3">
+            <textarea id="commentBody" rows="1" maxlength="280" class="w-full min-h-[24px] max-h-36 bg-transparent text-sm text-white placeholder:text-white/35 outline-none resize-none" placeholder="Ask a question or share something helpful."></textarea>
+            <div class="mt-3 flex items-center justify-between gap-3 text-xs text-white/45">
+              <span id="commentHint">Ask a question or leave something helpful.</span>
+              <span id="commentCount">0/280</span>
+            </div>
+          </div>
+          <button id="commentSubmit" type="submit" class="theme-primary h-12 px-4 rounded-2xl font-semibold shrink-0">Send</button>
         </div>
-      </div>
+      </form>
     </div>
   </div>
+  <script type="module" src="scripts/app.js"></script>
 </body>
 </html>

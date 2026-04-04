@@ -25,7 +25,7 @@ import {
   getDownloadURL,
   where,
 } from "./firebase.js";
-import { DEMO_OPPORTUNITIES } from "./sample-data.js";
+import { DEMO_COMMENTS, DEMO_OPPORTUNITIES } from "./sample-data.js";
 
 const RETURN_TO_KEY = "oval.returnTo";
 const BOOTSTRAP_ADMIN_EMAILS = new Set([
@@ -33,6 +33,7 @@ const BOOTSTRAP_ADMIN_EMAILS = new Set([
   "sentira.official@gmail.com",
 ]);
 const MAX_CAPTION_LENGTH = 150;
+const MAX_COMMENT_LENGTH = 280;
 const FEED_CAPTION_LENGTH = 100;
 const FEED_BATCH_SIZE = 4;
 const FEED_VIDEO_SOUND_KEY = "oval.feedVideoSoundEnabled";
@@ -714,6 +715,41 @@ async function loadOpportunity(opportunityId, options = {}) {
   return null;
 }
 
+function normalizeComment(docSnapshot) {
+  const data = docSnapshot.data();
+  return {
+    id: docSnapshot.id,
+    ...data,
+    parentId: data.parentId || null,
+  };
+}
+
+function demoCommentsForOpportunity(opportunityId) {
+  return (DEMO_COMMENTS[opportunityId] || []).map((item) => ({
+    ...item,
+    seeded: true,
+    parentId: item.parentId || null,
+  }));
+}
+
+async function loadOpportunityComments(opportunityId) {
+  if (!opportunityId) {
+    return [];
+  }
+  try {
+    const snapshot = await withTimeout(
+      getDocs(query(collection(db, "opportunities", opportunityId, "comments"), orderBy("createdAt", "asc"))),
+    );
+    const items = snapshot.docs.map(normalizeComment);
+    return items.length || !opportunityId.startsWith("demo-")
+      ? items
+      : demoCommentsForOpportunity(opportunityId);
+  } catch (error) {
+    console.warn("Comment load failed.", error);
+    return demoCommentsForOpportunity(opportunityId);
+  }
+}
+
 async function loadUserStates(uid) {
   let statesSnapshot;
   try {
@@ -754,6 +790,123 @@ async function createNotification(uid, payload) {
     read: false,
     createdAt: Timestamp.now(),
   });
+}
+
+function isOpportunityPoster(opportunity, comment) {
+  if (!opportunity || !comment) {
+    return false;
+  }
+  if (opportunity.creatorUid && comment.authorUid) {
+    return opportunity.creatorUid === comment.authorUid;
+  }
+  return Boolean(
+    opportunity.creatorHandle
+    && comment.authorHandle
+    && opportunity.creatorHandle === comment.authorHandle,
+  );
+}
+
+async function createOpportunityComment(opportunity, user, profile, body, parentId = null) {
+  if (!opportunity || !opportunity.id || opportunity.seeded) {
+    throw new Error("Comments are not available for demo content.");
+  }
+  if (opportunity.allowComments === false) {
+    throw new Error("Comments are turned off for this opportunity.");
+  }
+  const trimmedBody = String(body || "").trim();
+  if (!trimmedBody) {
+    throw new Error("Write a comment first.");
+  }
+  if (trimmedBody.length > MAX_COMMENT_LENGTH) {
+    throw new Error(`Comments can be up to ${MAX_COMMENT_LENGTH} characters.`);
+  }
+
+  const opportunityRef = doc(db, "opportunities", opportunity.id);
+  const commentsRef = collection(db, "opportunities", opportunity.id, "comments");
+  const commentRef = doc(commentsRef);
+  const now = Timestamp.now();
+  const nextComment = {
+    id: commentRef.id,
+    authorUid: user.uid,
+    authorName: profile.displayName || "Oval User",
+    authorHandle: `@${profile.username || uniqueUsername(profile.displayName || user.email?.split("@")[0])}`,
+    authorPhotoURL: profile.photoURL || DEFAULT_AVATAR,
+    body: trimmedBody,
+    parentId: parentId || null,
+    createdAt: now,
+    updatedAt: now,
+  };
+  let replyTarget = null;
+
+  await runTransaction(db, async (transaction) => {
+    const opportunitySnapshotRef = await transaction.get(opportunityRef);
+    if (!opportunitySnapshotRef.exists()) {
+      throw new Error("This opportunity is no longer available.");
+    }
+
+    const currentOpportunity = opportunitySnapshotRef.data();
+    if (currentOpportunity.status !== "published") {
+      throw new Error("Comments are not open on this post.");
+    }
+    if (currentOpportunity.allowComments === false) {
+      throw new Error("Comments are turned off for this opportunity.");
+    }
+
+    if (parentId) {
+      const parentRef = doc(db, "opportunities", opportunity.id, "comments", parentId);
+      const parentSnapshot = await transaction.get(parentRef);
+      if (!parentSnapshot.exists()) {
+        throw new Error("The comment you replied to no longer exists.");
+      }
+      replyTarget = {
+        id: parentSnapshot.id,
+        ...parentSnapshot.data(),
+      };
+    }
+
+    transaction.set(commentRef, {
+      authorUid: nextComment.authorUid,
+      authorName: nextComment.authorName,
+      authorHandle: nextComment.authorHandle,
+      authorPhotoURL: nextComment.authorPhotoURL,
+      body: nextComment.body,
+      parentId: nextComment.parentId,
+      createdAt: now,
+      updatedAt: now,
+    });
+    transaction.update(opportunityRef, {
+      commentsCount: Math.max(Number(currentOpportunity.commentsCount || 0) + 1, 1),
+      updatedAt: now,
+    });
+  });
+
+  if (opportunity.creatorUid && opportunity.creatorUid !== user.uid) {
+    await createNotification(opportunity.creatorUid, {
+      type: "comment",
+      title: "New comment on your post",
+      body: `${profile.displayName || "Someone"} commented on ${opportunity.title}.`,
+      opportunityId: opportunity.id,
+    }).catch((error) => {
+      console.warn("Creator comment notification failed.", error);
+    });
+  }
+
+  if (
+    replyTarget?.authorUid
+    && replyTarget.authorUid !== user.uid
+    && replyTarget.authorUid !== opportunity.creatorUid
+  ) {
+    await createNotification(replyTarget.authorUid, {
+      type: "comment-reply",
+      title: "New reply to your comment",
+      body: `${profile.displayName || "Someone"} replied on ${opportunity.title}.`,
+      opportunityId: opportunity.id,
+    }).catch((error) => {
+      console.warn("Reply notification failed.", error);
+    });
+  }
+
+  return nextComment;
 }
 
 async function requireUserForAction() {
@@ -1122,6 +1275,53 @@ function renderOpportunityListCard(opportunity, state = {}, options = {}) {
         </div>
       </div>
     </div>
+  `;
+}
+
+function formatCommentCount(count) {
+  const normalized = Math.max(0, Number(count || 0));
+  return `${formatCompact(normalized)} ${normalized === 1 ? "comment" : "comments"}`;
+}
+
+function renderMultilineText(value) {
+  return escapeHtml(String(value || "")).replace(/\r?\n/g, "<br>");
+}
+
+function renderCommentThread(comment, repliesByParent, opportunity, user, canReply, depth = 0) {
+  const replies = repliesByParent.get(comment.id) || [];
+  const badges = [];
+  if (isOpportunityPoster(opportunity, comment)) {
+    badges.push('<span class="text-[10px] px-2 py-1 rounded-full bg-white text-black">Poster</span>');
+  }
+  if (user?.uid && comment.authorUid === user.uid) {
+    badges.push('<span class="text-[10px] px-2 py-1 rounded-full bg-white/10 border border-white/10 text-white/75">You</span>');
+  }
+
+  return `
+    <article class="${depth ? "ml-4 pl-4 border-l border-white/10" : ""}">
+      <div class="flex gap-3">
+        <img src="${escapeHtml(comment.authorPhotoURL || DEFAULT_AVATAR)}" class="w-10 h-10 rounded-full object-cover" alt="${escapeHtml(comment.authorName || "Comment author")}">
+        <div class="flex-1 min-w-0">
+          <div class="flex items-center gap-2 flex-wrap">
+            <p class="text-sm font-semibold text-white/90">${escapeHtml(comment.authorName || "Oval User")}</p>
+            ${comment.authorHandle ? `<span class="text-xs text-white/45">${escapeHtml(comment.authorHandle)}</span>` : ""}
+            ${badges.join("")}
+            <span class="text-xs text-white/40">${escapeHtml(formatRelativeDate(comment.createdAt) || "just now")}</span>
+          </div>
+          <p class="text-sm text-white/80 mt-2 leading-6 break-words">${renderMultilineText(comment.body)}</p>
+          ${canReply ? `
+            <div class="mt-3 flex items-center gap-4 text-xs text-white/50">
+              <button type="button" class="hover:text-white transition" data-reply-id="${escapeHtml(comment.id)}" data-reply-name="${escapeHtml(comment.authorName || comment.authorHandle || "this user")}">Reply</button>
+            </div>
+          ` : ""}
+          ${replies.length ? `
+            <div class="mt-4 space-y-4">
+              ${replies.map((reply) => renderCommentThread(reply, repliesByParent, opportunity, user, canReply, depth + 1)).join("")}
+            </div>
+          ` : ""}
+        </div>
+      </div>
+    </article>
   `;
 }
 
@@ -1712,6 +1912,275 @@ async function initDetails(user, profile) {
       }
     });
   }
+}
+
+async function initComments(user, profile) {
+  const opportunityId = new URLSearchParams(location.search).get("id") || DEMO_OPPORTUNITIES[0].id;
+  const opportunity = await loadOpportunity(opportunityId, { fallbackToFirstDemo: opportunityId.startsWith("demo-") });
+  const shell = qs(".phone");
+
+  if (!opportunity) {
+    if (shell) {
+      shell.innerHTML = `
+        <div class="min-h-screen flex flex-col items-center justify-center px-6 text-center">
+          <div class="rounded-3xl bg-white/5 border border-white/10 p-6 max-w-sm">
+            <h1 class="text-xl font-semibold">Comments unavailable</h1>
+            <p class="text-sm text-white/60 mt-3">This post is still pending review or is no longer available publicly.</p>
+            <a href="feed.html" class="inline-flex mt-5 px-4 py-3 rounded-2xl bg-white text-black font-semibold">Back to feed</a>
+          </div>
+        </div>
+      `;
+    }
+    return;
+  }
+
+  const backLink = qs("#commentsBackLink");
+  const heading = qs("#commentsHeading");
+  const subheading = qs("#commentsSubheading");
+  const summary = qs("#commentsOpportunityCard");
+  const status = qs("#commentsStatus");
+  const list = qs("#commentsList");
+  const gate = qs("#commentsComposerGate");
+  const form = qs("#commentForm");
+  const replyBanner = qs("#commentReplyBanner");
+  const textarea = qs("#commentBody");
+  const count = qs("#commentCount");
+  const hint = qs("#commentHint");
+  const avatar = qs("#commentAuthorAvatar");
+  const submit = qs("#commentSubmit");
+  let comments = await loadOpportunityComments(opportunity.id);
+  let replyTarget = null;
+
+  if (backLink) {
+    const fallbackHref = detailsUrl(opportunity.id);
+    try {
+      const referrer = document.referrer ? new URL(document.referrer) : null;
+      const sameOrigin = referrer && referrer.origin === location.origin;
+      const referrerPage = referrer?.pathname.split("/").pop() || "";
+      backLink.href = sameOrigin
+        && !["comments.html", "sign-in-email.html", "onboarding.html", "index.html"].includes(referrerPage)
+        ? `${referrerPage || "feed.html"}${referrer.search || ""}${referrer.hash || ""}`
+        : fallbackHref;
+    } catch (error) {
+      backLink.href = fallbackHref;
+    }
+  }
+
+  function commentTotal() {
+    return Math.max(Number(opportunity.commentsCount || 0), comments.length);
+  }
+
+  function syncComposerCount() {
+    if (!textarea || !count) {
+      return;
+    }
+    textarea.style.height = "auto";
+    textarea.style.height = `${Math.min(textarea.scrollHeight, 140)}px`;
+    count.textContent = `${textarea.value.length}/${MAX_COMMENT_LENGTH}`;
+  }
+
+  function paintHeading() {
+    setText(heading, formatCommentCount(commentTotal()));
+    if (!subheading) {
+      return;
+    }
+    if (opportunity.seeded) {
+      subheading.textContent = `${opportunity.title} • sample conversation`;
+      return;
+    }
+    if (opportunity.allowComments === false) {
+      subheading.textContent = `${opportunity.title} • comments are turned off`;
+      return;
+    }
+    subheading.textContent = opportunity.title;
+  }
+
+  function paintSummary() {
+    if (!summary) {
+      return;
+    }
+    summary.classList.remove("hidden");
+    summary.innerHTML = `
+      <a href="${detailsUrl(opportunity.id)}" class="block">
+        <div class="flex gap-3">
+          ${renderOpportunityMedia(opportunity, "w-16 h-16 rounded-2xl object-cover", { muted: true, loop: true, autoplay: true })}
+          <div class="flex-1 min-w-0">
+            <div class="flex items-start justify-between gap-3">
+              <div>
+                <p class="font-semibold">${escapeHtml(opportunity.title)}</p>
+                <p class="text-sm text-white/60 mt-1">${escapeHtml(opportunity.creatorName || "Oval Creator")}</p>
+              </div>
+              <span class="text-[10px] px-2 py-1 rounded-full bg-white text-black">${escapeHtml(opportunity.category || "Post")}</span>
+            </div>
+            <div class="mt-3 flex flex-wrap gap-2 text-[11px]">
+              <span class="chip px-2.5 py-1 rounded-full">${escapeHtml(opportunity.locationLabel || "Remote")}</span>
+              <span class="chip px-2.5 py-1 rounded-full">${escapeHtml(opportunity.payLabel || "Compensation listed")}</span>
+              ${opportunity.allowComments === false ? '<span class="chip px-2.5 py-1 rounded-full">Comments off</span>' : `<span class="chip px-2.5 py-1 rounded-full">${escapeHtml(formatCommentCount(commentTotal()))}</span>`}
+            </div>
+          </div>
+        </div>
+      </a>
+    `;
+  }
+
+  function paintReplyBanner() {
+    if (!replyBanner) {
+      return;
+    }
+    if (!replyTarget) {
+      replyBanner.className = "hidden";
+      replyBanner.innerHTML = "";
+      return;
+    }
+    replyBanner.className = "rounded-2xl bg-white/10 border border-white/10 px-4 py-3 text-sm flex items-center justify-between gap-3";
+    replyBanner.innerHTML = `
+      <div>
+        <p class="text-[10px] uppercase tracking-[0.18em] text-white/45">Replying to</p>
+        <p class="font-medium mt-1">${escapeHtml(replyTarget.name)}</p>
+      </div>
+      <button type="button" class="text-sm text-white/70" data-clear-reply>Cancel</button>
+    `;
+  }
+
+  function paintComposer() {
+    const returnTo = encodeURIComponent(toRelativePath());
+    if (avatar) {
+      avatar.src = profile?.photoURL || DEFAULT_AVATAR;
+      avatar.alt = profile?.displayName || "Your profile";
+    }
+
+    if (!user || !profile) {
+      gate.className = "rounded-2xl bg-white/10 border border-white/10 px-4 py-4 text-sm";
+      gate.innerHTML = `
+        <p class="text-white/75">Sign in to add a comment or reply.</p>
+        <a href="sign-in-email.html?returnTo=${returnTo}" class="inline-flex mt-3 px-4 py-2 rounded-xl bg-white text-black font-semibold">Sign in to comment</a>
+      `;
+      form.classList.add("hidden");
+      return;
+    }
+
+    if (opportunity.seeded) {
+      gate.className = "rounded-2xl bg-white/10 border border-white/10 px-4 py-4 text-sm text-white/70";
+      gate.textContent = "Demo comments are read-only while you are viewing bundled sample content.";
+      form.classList.add("hidden");
+      return;
+    }
+
+    if (opportunity.allowComments === false) {
+      gate.className = "rounded-2xl bg-white/10 border border-white/10 px-4 py-4 text-sm text-white/70";
+      gate.textContent = "Comments are turned off for this opportunity.";
+      form.classList.add("hidden");
+      return;
+    }
+
+    gate.className = "hidden";
+    gate.innerHTML = "";
+    form.classList.remove("hidden");
+    if (hint) {
+      hint.textContent = replyTarget
+        ? `Replying inside ${opportunity.title}`
+        : "Ask a question or leave something helpful.";
+    }
+    paintReplyBanner();
+    syncComposerCount();
+  }
+
+  function renderComments() {
+    const repliesByParent = new Map();
+    comments.forEach((comment) => {
+      const key = comment.parentId || "__root__";
+      if (!repliesByParent.has(key)) {
+        repliesByParent.set(key, []);
+      }
+      repliesByParent.get(key).push(comment);
+    });
+
+    const rootComments = repliesByParent.get("__root__") || [];
+    const canReply = opportunity.allowComments !== false && !opportunity.seeded;
+
+    if (!rootComments.length) {
+      list.innerHTML = `
+        <div class="rounded-3xl bg-white/5 border border-white/10 p-6 text-sm text-white/60">
+          ${opportunity.allowComments === false
+            ? "Comments are turned off for this opportunity."
+            : "No comments yet. Start the conversation when you are ready."}
+        </div>
+      `;
+    } else {
+      list.innerHTML = rootComments
+        .map((comment) => renderCommentThread(comment, repliesByParent, opportunity, user, canReply))
+        .join("");
+    }
+
+    paintHeading();
+    paintSummary();
+  }
+
+  list?.addEventListener("click", (event) => {
+    const replyButton = event.target.closest("[data-reply-id]");
+    if (!replyButton || opportunity.allowComments === false || opportunity.seeded) {
+      return;
+    }
+    if (!user || !profile) {
+      setPendingReturnTo(toRelativePath());
+      location.href = `sign-in-email.html?returnTo=${encodeURIComponent(toRelativePath())}`;
+      return;
+    }
+    replyTarget = {
+      id: replyButton.dataset.replyId,
+      name: replyButton.dataset.replyName || "this comment",
+    };
+    paintReplyBanner();
+    paintComposer();
+    textarea?.focus();
+  });
+
+  replyBanner?.addEventListener("click", (event) => {
+    if (!event.target.closest("[data-clear-reply]")) {
+      return;
+    }
+    replyTarget = null;
+    paintReplyBanner();
+    paintComposer();
+    textarea?.focus();
+  });
+
+  textarea?.addEventListener("input", syncComposerCount);
+
+  form?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    if (!textarea || !submit) {
+      return;
+    }
+    submit.disabled = true;
+    setStatus(status, "");
+    try {
+      const nextComment = await createOpportunityComment(
+        opportunity,
+        user,
+        profile,
+        textarea.value,
+        replyTarget?.id || null,
+      );
+      comments = [...comments, nextComment];
+      opportunity.commentsCount = Math.max(Number(opportunity.commentsCount || 0) + 1, comments.length);
+      textarea.value = "";
+      replyTarget = null;
+      renderComments();
+      paintComposer();
+      syncComposerCount();
+      setStatus(status, nextComment.parentId ? "Reply posted." : "Comment posted.", "success");
+    } catch (error) {
+      console.error(error);
+      setStatus(status, error.message || "Comment failed.", "error");
+    } finally {
+      submit.disabled = false;
+    }
+  });
+
+  renderComments();
+  paintComposer();
+  syncComposerCount();
 }
 
 async function initSearch(user) {
@@ -2517,6 +2986,10 @@ async function main() {
   }
   if (page === "details") {
     await initDetails(user, profile);
+    return;
+  }
+  if (page === "comments") {
+    await initComments(user, profile);
     return;
   }
   if (page === "search") {

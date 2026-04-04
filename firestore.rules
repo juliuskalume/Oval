@@ -35,16 +35,55 @@ service cloud.firestore {
     function validOpportunityCounters() {
       return request.resource.data.savesCount >= 0
         && request.resource.data.appliedCount >= 0
+        && request.resource.data.commentsCount >= 0
         && request.resource.data.likesCount >= 0
         && request.resource.data.viewsCount >= 0
         && request.resource.data.savesCount >= resource.data.savesCount - 1
         && request.resource.data.savesCount <= resource.data.savesCount + 1
         && request.resource.data.appliedCount >= resource.data.appliedCount - 1
         && request.resource.data.appliedCount <= resource.data.appliedCount + 1
+        && request.resource.data.commentsCount >= resource.data.commentsCount
+        && request.resource.data.commentsCount <= resource.data.commentsCount + 1
         && request.resource.data.likesCount >= resource.data.likesCount - 1
         && request.resource.data.likesCount <= resource.data.likesCount + 1
         && request.resource.data.viewsCount >= resource.data.viewsCount
         && request.resource.data.viewsCount <= resource.data.viewsCount + 1;
+    }
+
+    function validCommentPayload() {
+      return request.resource.data.keys().hasOnly([
+          'authorUid',
+          'authorName',
+          'authorHandle',
+          'authorPhotoURL',
+          'body',
+          'parentId',
+          'createdAt',
+          'updatedAt'
+        ])
+        && request.resource.data.authorUid == request.auth.uid
+        && request.resource.data.authorUid is string
+        && request.resource.data.authorName is string
+        && request.resource.data.authorName.size() > 0
+        && request.resource.data.authorName.size() <= 80
+        && request.resource.data.authorHandle is string
+        && request.resource.data.authorHandle.size() > 0
+        && request.resource.data.authorHandle.size() <= 40
+        && request.resource.data.authorPhotoURL is string
+        && request.resource.data.authorPhotoURL.size() > 0
+        && request.resource.data.authorPhotoURL.size() <= 1000
+        && request.resource.data.body is string
+        && request.resource.data.body.size() > 0
+        && request.resource.data.body.size() <= 280
+        && request.resource.data.createdAt is timestamp
+        && request.resource.data.updatedAt is timestamp
+        && (
+          request.resource.data.parentId == null
+          || (
+            request.resource.data.parentId is string
+            && request.resource.data.parentId.size() > 0
+          )
+        );
     }
 
     match /users/{uid} {
@@ -105,6 +144,7 @@ service cloud.firestore {
           && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
             'savesCount',
             'appliedCount',
+            'commentsCount',
             'likesCount',
             'viewsCount',
             'updatedAt'
@@ -123,7 +163,9 @@ service cloud.firestore {
             && get(/databases/$(database)/documents/opportunities/$(opportunityId)).data.creatorUid == request.auth.uid
           );
         allow create: if signedIn()
-          && get(/databases/$(database)/documents/opportunities/$(opportunityId)).data.status == 'published';
+          && get(/databases/$(database)/documents/opportunities/$(opportunityId)).data.status == 'published'
+          && get(/databases/$(database)/documents/opportunities/$(opportunityId)).data.allowComments != false
+          && validCommentPayload();
         allow update, delete: if isAdmin();
       }
     }
