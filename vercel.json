@@ -1,0 +1,9 @@
+{
+  "redirects": [
+    {
+      "source": "/",
+      "destination": "/onboarding.html",
+      "permanent": false
+    }
+  ]
+}

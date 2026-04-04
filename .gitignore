@@ -3,3 +3,4 @@ Thumbs.db
 *.log
 firebase-debug.log
 *-smoke.png
+.vercel
