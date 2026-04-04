@@ -114,8 +114,8 @@ function ensurePwaShellMeta() {
   ensureMetaTag('meta[name="format-detection"]', { name: "format-detection" }, "telephone=no");
 
   ensureLinkTag('link[rel="manifest"]', { rel: "manifest", href: "manifest.webmanifest" });
-  ensureLinkTag('link[rel="icon"]', { rel: "icon", type: "image/png", sizes: "192x192", href: "assets/pwa/icon-192.png" });
-  ensureLinkTag('link[rel="apple-touch-icon"]', { rel: "apple-touch-icon", sizes: "180x180", href: "assets/pwa/apple-touch-icon.png" });
+  ensureLinkTag('link[rel="icon"]', { rel: "icon", type: "image/png", sizes: "192x192", href: "assets/pwa/icon-any-192.png" });
+  ensureLinkTag('link[rel="apple-touch-icon"]', { rel: "apple-touch-icon", sizes: "180x180", href: "assets/pwa/apple-touch-icon-v2.png" });
 }
 
 function registerServiceWorker() {

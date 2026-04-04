@@ -1,4 +1,4 @@
-const CACHE_VERSION = "v1";
+const CACHE_VERSION = "v2";
 const STATIC_CACHE = `oval-static-${CACHE_VERSION}`;
 const RUNTIME_CACHE = `oval-runtime-${CACHE_VERSION}`;
 const OFFLINE_URL = "./offline.html";
@@ -27,9 +27,11 @@ const APP_SHELL_FILES = [
   "./scripts/app.js",
   "./scripts/firebase.js",
   "./scripts/sample-data.js",
-  "./assets/pwa/icon-192.png",
-  "./assets/pwa/icon-512.png",
-  "./assets/pwa/apple-touch-icon.png"
+  "./assets/pwa/icon-any-192.png",
+  "./assets/pwa/icon-any-512.png",
+  "./assets/pwa/icon-maskable-192.png",
+  "./assets/pwa/icon-maskable-512.png",
+  "./assets/pwa/apple-touch-icon-v2.png"
 ];
 
 const EXTERNAL_STATIC_FILES = [

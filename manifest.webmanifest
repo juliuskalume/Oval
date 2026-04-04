@@ -24,16 +24,28 @@
   "prefer_related_applications": false,
   "icons": [
     {
-      "src": "assets/pwa/icon-192.png",
+      "src": "assets/pwa/icon-any-192.png",
       "sizes": "192x192",
       "type": "image/png",
-      "purpose": "any maskable"
+      "purpose": "any"
     },
     {
-      "src": "assets/pwa/icon-512.png",
+      "src": "assets/pwa/icon-any-512.png",
       "sizes": "512x512",
       "type": "image/png",
-      "purpose": "any maskable"
+      "purpose": "any"
+    },
+    {
+      "src": "assets/pwa/icon-maskable-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "maskable"
+    },
+    {
+      "src": "assets/pwa/icon-maskable-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
     }
   ],
   "shortcuts": [
@@ -43,7 +55,7 @@
       "url": "./feed.html",
       "icons": [
         {
-          "src": "assets/pwa/icon-192.png",
+          "src": "assets/pwa/icon-any-192.png",
           "sizes": "192x192",
           "type": "image/png"
         }
@@ -55,7 +67,7 @@
       "url": "./search.html",
       "icons": [
         {
-          "src": "assets/pwa/icon-192.png",
+          "src": "assets/pwa/icon-any-192.png",
           "sizes": "192x192",
           "type": "image/png"
         }
@@ -67,7 +79,7 @@
       "url": "./create-post.html",
       "icons": [
         {
-          "src": "assets/pwa/icon-192.png",
+          "src": "assets/pwa/icon-any-192.png",
           "sizes": "192x192",
           "type": "image/png"
         }
