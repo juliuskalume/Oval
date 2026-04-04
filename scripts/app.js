@@ -259,6 +259,75 @@ function opportunityMedia(opportunity) {
   return opportunity?.media?.url || opportunity?.mediaUrl || DEFAULT_COVER;
 }
 
+function opportunityMediaKind(opportunity) {
+  return opportunity?.media?.kind || opportunity?.mediaKind || "image/jpeg";
+}
+
+function isVideoKind(kind) {
+  return String(kind || "").toLowerCase().startsWith("video/");
+}
+
+function mediaElementMarkup({ url, kind, alt = "", className = "", autoplay = false, muted = false, loop = false, controls = false }) {
+  const safeUrl = escapeHtml(url || DEFAULT_COVER);
+  const safeClassName = escapeHtml(className);
+  const safeAlt = escapeHtml(alt);
+  if (isVideoKind(kind)) {
+    const attributes = [
+      autoplay ? "autoplay" : "",
+      muted ? "muted" : "",
+      loop ? "loop" : "",
+      controls ? "controls" : "",
+      "playsinline",
+      'preload="metadata"',
+    ]
+      .filter(Boolean)
+      .join(" ");
+    return `<video src="${safeUrl}" class="${safeClassName}" ${attributes} aria-label="${safeAlt}"></video>`;
+  }
+  return `<img src="${safeUrl}" class="${safeClassName}" alt="${safeAlt}">`;
+}
+
+function renderOpportunityMedia(opportunity, className, options = {}) {
+  return mediaElementMarkup({
+    url: opportunityMedia(opportunity),
+    kind: opportunityMediaKind(opportunity),
+    alt: opportunity?.title || "Opportunity media",
+    className,
+    ...options,
+  });
+}
+
+function fileExtension(file) {
+  const name = String(file?.name || "");
+  const extensionMatch = name.match(/(\.[a-z0-9]+)$/i);
+  if (extensionMatch) {
+    return extensionMatch[1].toLowerCase();
+  }
+  const type = String(file?.type || "").toLowerCase();
+  if (type === "image/jpeg") {
+    return ".jpg";
+  }
+  if (type === "image/png") {
+    return ".png";
+  }
+  if (type === "image/webp") {
+    return ".webp";
+  }
+  if (type === "image/gif") {
+    return ".gif";
+  }
+  if (type === "video/mp4") {
+    return ".mp4";
+  }
+  if (type === "video/webm") {
+    return ".webm";
+  }
+  if (type === "video/quicktime") {
+    return ".mov";
+  }
+  return "";
+}
+
 function creatorAvatar(opportunity) {
   return opportunity?.creatorPhotoURL || opportunity?.creatorAvatarUrl || DEFAULT_AVATAR;
 }
@@ -293,6 +362,7 @@ function opportunitySnapshot(opportunity) {
     locationLabel: opportunity.locationLabel,
     payLabel: opportunity.payLabel,
     mediaUrl: opportunityMedia(opportunity),
+    mediaKind: opportunityMediaKind(opportunity),
     applyUrl: opportunity.applyUrl || "",
   };
 }
@@ -523,14 +593,25 @@ async function requireUserForAction() {
 }
 
 async function uploadFile(file, folder, uid) {
-  const fileName = `${Date.now()}-${slugify(file.name || "file") || "file"}`;
+  const fileName = `${Date.now()}-${slugify(String(file.name || "file").replace(/\.[^.]+$/, "")) || "file"}${fileExtension(file)}`;
   const storageRef = ref(storage, `${folder}/${uid}/${fileName}`);
-  await uploadBytes(storageRef, file);
-  return {
-    name: file.name,
-    url: await getDownloadURL(storageRef),
-    kind: file.type || "file",
-  };
+  try {
+    await uploadBytes(
+      storageRef,
+      file,
+      file.type ? { contentType: file.type } : undefined,
+    );
+    return {
+      name: file.name || fileName,
+      url: await getDownloadURL(storageRef),
+      kind: file.type || "file",
+    };
+  } catch (error) {
+    if (error?.code === "storage/unauthorized") {
+      throw new Error("Media upload is blocked by Firebase Storage rules. Deploy storage.rules and make sure the user is signed in.");
+    }
+    throw new Error(error?.message || "Media upload failed.");
+  }
 }
 
 function redirectAfterAuth(profile) {
@@ -802,7 +883,7 @@ function renderOpportunityListCard(opportunity, state = {}, options = {}) {
   return `
     <div class="rounded-3xl bg-white/5 border border-white/10 p-4">
       <div class="flex items-start gap-3">
-        <img src="${escapeHtml(opportunityMedia(opportunity))}" class="w-16 h-16 rounded-2xl object-cover" alt="${escapeHtml(opportunity.title)}">
+        ${renderOpportunityMedia(opportunity, "w-16 h-16 rounded-2xl object-cover", { muted: true, loop: true, autoplay: true })}
         <div class="flex-1">
           <div class="flex items-start justify-between gap-3">
             <div>
@@ -845,7 +926,7 @@ function renderFeedSlide(opportunity, state = {}) {
   return `
     <section class="relative min-h-screen snap-start" data-opportunity-id="${escapeHtml(opportunity.id)}">
       <div class="absolute inset-0">
-        <img src="${escapeHtml(opportunityMedia(opportunity))}" class="w-full h-full object-cover" alt="${escapeHtml(opportunity.title)}">
+        ${renderOpportunityMedia(opportunity, "w-full h-full object-cover", { muted: true, loop: true, autoplay: true })}
         <div class="absolute inset-0 bg-gradient-to-t from-black/85 via-black/10 to-black/45"></div>
       </div>
       <div class="relative min-h-screen px-4">
@@ -1110,8 +1191,12 @@ async function initDetails(user, profile) {
 
   const cover = qs("#detailsCover");
   if (cover) {
-    cover.src = opportunityMedia(opportunity);
-    cover.alt = opportunity.title;
+    cover.innerHTML = renderOpportunityMedia(opportunity, "w-full h-full object-cover", {
+      muted: true,
+      loop: true,
+      autoplay: true,
+      controls: isVideoKind(opportunityMediaKind(opportunity)),
+    });
   }
   const creatorImage = qs("#detailsCreatorAvatar");
   if (creatorImage) {
@@ -1417,7 +1502,7 @@ async function initProfile(user, profile) {
           return `
           <div class="rounded-3xl bg-white/5 border border-white/10 p-4">
             <div class="flex items-start gap-3">
-              <img src="${escapeHtml(opportunityMedia(item))}" class="w-16 h-16 rounded-2xl object-cover" alt="${escapeHtml(item.title)}">
+              ${renderOpportunityMedia(item, "w-16 h-16 rounded-2xl object-cover", { muted: true, loop: true, autoplay: true })}
               <div class="flex-1">
                 <div class="flex items-start justify-between gap-3">
                   <div>
@@ -1534,6 +1619,7 @@ async function initCreatePost(user, profile) {
   const existingAttachmentsState = [];
   const editId = new URLSearchParams(location.search).get("id");
   let editingOpportunity = null;
+  let coverPreviewObjectUrl = "";
 
   function syncCaptionCount() {
     if (!captionCount) {
@@ -1545,6 +1631,22 @@ async function initCreatePost(user, profile) {
 
   if (submit) {
     submit.textContent = profile.role === "admin" ? "Publish opportunity" : "Submit for review";
+  }
+
+  function paintCoverPreview(url, kind, title = "Cover preview") {
+    if (!coverPreview) {
+      return;
+    }
+    coverPreview.innerHTML = mediaElementMarkup({
+      url,
+      kind,
+      alt: title,
+      className: "w-full h-full object-cover",
+      muted: true,
+      loop: true,
+      autoplay: true,
+      controls: isVideoKind(kind),
+    });
   }
 
   if (editId) {
@@ -1583,11 +1685,13 @@ async function initCreatePost(user, profile) {
     qs("#perks").value = serializeLines(editingOpportunity.perks);
     qs("#aboutCompany").value = editingOpportunity.aboutCompany || "";
     qs("#allowComments").checked = Boolean(editingOpportunity.allowComments);
-    if (coverPreview) {
-      coverPreview.src = opportunityMedia(editingOpportunity);
-    }
+    paintCoverPreview(opportunityMedia(editingOpportunity), opportunityMediaKind(editingOpportunity), editingOpportunity.title);
     existingAttachmentsState.push(...(editingOpportunity.attachments || []));
     renderExistingAttachments();
+  }
+
+  if (!editingOpportunity) {
+    paintCoverPreview(DEFAULT_COVER, "image/jpeg");
   }
 
   captionInput?.addEventListener("input", syncCaptionCount);
@@ -1624,7 +1728,11 @@ async function initCreatePost(user, profile) {
     if (!file || !coverPreview) {
       return;
     }
-    coverPreview.src = URL.createObjectURL(file);
+    if (coverPreviewObjectUrl) {
+      URL.revokeObjectURL(coverPreviewObjectUrl);
+    }
+    coverPreviewObjectUrl = URL.createObjectURL(file);
+    paintCoverPreview(coverPreviewObjectUrl, file.type, file.name || "Cover preview");
   });
 
   form.addEventListener("submit", async (event) => {
@@ -1714,6 +1822,11 @@ async function initCreatePost(user, profile) {
         existingAttachmentsState.length = 0;
         renderExistingAttachments();
         syncCaptionCount();
+        if (coverPreviewObjectUrl) {
+          URL.revokeObjectURL(coverPreviewObjectUrl);
+          coverPreviewObjectUrl = "";
+        }
+        paintCoverPreview(DEFAULT_COVER, "image/jpeg");
         setStatus(
           status,
           nextStatus === "pending"
@@ -1758,7 +1871,7 @@ async function initCreatorDashboard(user, profile) {
           const itemStatus = statusMeta(item.status);
           return `
           <div class="flex items-center gap-3">
-            <img src="${escapeHtml(opportunityMedia(item))}" class="w-14 h-14 rounded-2xl object-cover" alt="${escapeHtml(item.title)}">
+            ${renderOpportunityMedia(item, "w-14 h-14 rounded-2xl object-cover", { muted: true, loop: true, autoplay: true })}
             <div class="flex-1">
               <p class="font-medium text-sm">${escapeHtml(item.title)}</p>
               <div class="mt-1 flex flex-wrap items-center gap-2">
@@ -1848,7 +1961,7 @@ async function initAdminModeration(user, profile) {
       .map((item) => `
         <div class="rounded-3xl bg-white/5 border border-white/10 p-4">
           <div class="flex flex-col md:flex-row gap-4">
-            <img src="${escapeHtml(opportunityMedia(item))}" class="w-full md:w-56 h-40 rounded-2xl object-cover" alt="${escapeHtml(item.title)}">
+            ${renderOpportunityMedia(item, "w-full md:w-56 h-40 rounded-2xl object-cover", { muted: true, loop: true, autoplay: true })}
             <div class="flex-1">
               <div class="flex items-start justify-between gap-4">
                 <div>
