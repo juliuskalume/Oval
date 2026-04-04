@@ -32,6 +32,8 @@ const BOOTSTRAP_ADMIN_EMAILS = new Set([
   "juliuskalume906@gmail.com",
   "sentira.official@gmail.com",
 ]);
+const MAX_CAPTION_LENGTH = 150;
+const FEED_CAPTION_LENGTH = 100;
 const DEFAULT_COVER =
   "https://images.unsplash.com/photo-1521737604893-d14cc237f11d?auto=format&fit=crop&w=1200&q=80";
 const DEFAULT_AVATAR =
@@ -158,13 +160,6 @@ function formatCompact(value) {
   }).format(Number(value || 0));
 }
 
-function arrayFromInput(value, separator = ",") {
-  return String(value || "")
-    .split(separator)
-    .map((item) => item.trim())
-    .filter(Boolean);
-}
-
 function linesFromInput(value) {
   return String(value || "")
     .split(/\r?\n/)
@@ -176,8 +171,17 @@ function serializeLines(items) {
   return Array.isArray(items) ? items.join("\n") : "";
 }
 
-function serializeTags(items) {
-  return Array.isArray(items) ? items.join(", ") : "";
+function extractHashtags(value) {
+  const matches = String(value || "").match(/#[a-z0-9][a-z0-9_-]*/gi) || [];
+  return [...new Set(matches.map((item) => item.slice(1).toLowerCase()))];
+}
+
+function truncateText(value, maxLength) {
+  const text = String(value || "").trim();
+  if (text.length <= maxLength) {
+    return text;
+  }
+  return `${text.slice(0, Math.max(0, maxLength - 3)).trimEnd()}...`;
 }
 
 function safeUrl(value) {
@@ -972,8 +976,7 @@ async function initFeed(user) {
                 </div>
                 <p class="font-semibold text-sm">${escapeHtml(opportunity.creatorHandle || opportunity.creatorName)}</p>
                 <p class="text-sm mt-2 leading-5">
-                  ${escapeHtml(opportunity.caption)}
-                  <span class="text-white/80">${escapeHtml((opportunity.tags || []).map((item) => `#${item}`).join(" "))}</span>
+                  ${escapeHtml(truncateText(opportunity.caption, FEED_CAPTION_LENGTH))}
                 </p>
                 <div class="mt-3 flex items-center gap-2 text-xs text-white/80">
                   <span class="material-symbols-outlined text-[16px]">location_on</span>
@@ -1143,8 +1146,9 @@ async function initDetails(user, profile) {
 
   const tags = qs("#detailsTags");
   tags.innerHTML = (opportunity.tags || [])
-    .map((value) => `<span class="chip px-3 py-2 rounded-full text-sm">${escapeHtml(value)}</span>`)
+    .map((value) => `<span class="chip px-3 py-2 rounded-full text-sm">${escapeHtml(`#${value}`)}</span>`)
     .join("");
+  tags.parentElement?.classList.toggle("hidden", !(opportunity.tags || []).length);
 
   const saveButtons = qsa("[data-details-save]");
   const appliedButton = qs("#markAppliedButton");
@@ -1231,7 +1235,7 @@ async function initSearch(user) {
         opportunity.caption,
         opportunity.creatorName,
         opportunity.locationLabel,
-        ...(opportunity.tags || []),
+        ...(opportunity.tags || []).flatMap((item) => [item, `#${item}`]),
       ]
         .join(" ")
         .toLowerCase();
@@ -1487,10 +1491,20 @@ async function initCreatePost(user, profile) {
   const status = qs("#createPostStatus");
   const submit = qs("#publishOpportunityButton");
   const coverPreview = qs("#coverPreview");
+  const captionInput = qs("#caption");
+  const captionCount = qs("#captionCount");
   const existingAttachmentsWrap = qs("#existingAttachments");
   const existingAttachmentsState = [];
   const editId = new URLSearchParams(location.search).get("id");
   let editingOpportunity = null;
+
+  function syncCaptionCount() {
+    if (!captionCount) {
+      return;
+    }
+    const currentLength = String(captionInput?.value || "").length;
+    captionCount.textContent = `${currentLength}/${MAX_CAPTION_LENGTH}`;
+  }
 
   if (submit) {
     submit.textContent = profile.role === "admin" ? "Publish opportunity" : "Submit for review";
@@ -1526,7 +1540,6 @@ async function initCreatePost(user, profile) {
     qs("#workMode").value = editingOpportunity.workMode || "Remote";
     qs("#payLabel").value = editingOpportunity.payLabel || "";
     qs("#deadlineAt").value = toDate(editingOpportunity.deadlineAt)?.toISOString().slice(0, 10) || "";
-    qs("#tags").value = serializeTags(editingOpportunity.tags);
     qs("#eligibility").value = serializeLines(editingOpportunity.eligibility);
     qs("#responsibilities").value = serializeLines(editingOpportunity.responsibilities);
     qs("#requirements").value = serializeLines(editingOpportunity.requirements);
@@ -1539,6 +1552,9 @@ async function initCreatePost(user, profile) {
     existingAttachmentsState.push(...(editingOpportunity.attachments || []));
     renderExistingAttachments();
   }
+
+  captionInput?.addEventListener("input", syncCaptionCount);
+  syncCaptionCount();
 
   function renderExistingAttachments() {
     existingAttachmentsWrap.innerHTML = existingAttachmentsState
@@ -1585,7 +1601,10 @@ async function initCreatePost(user, profile) {
       const caption = String(formData.get("caption") || "").trim();
       const applyUrl = safeUrl(String(formData.get("applyUrl") || "").trim());
       if (!title || !caption || !applyUrl) {
-        throw new Error("Title, caption, and details URL are required.");
+        throw new Error("Title, description, and details URL are required.");
+      }
+      if (caption.length > MAX_CAPTION_LENGTH) {
+        throw new Error(`Descriptions can be up to ${MAX_CAPTION_LENGTH} characters.`);
       }
 
       const coverFile = qs("#coverMedia").files?.[0];
@@ -1614,7 +1633,7 @@ async function initCreatePost(user, profile) {
           const fallback = new Date(Date.now() + 1000 * 60 * 60 * 24 * 30);
           return Timestamp.fromDate(deadlineValue ? new Date(deadlineValue) : fallback);
         })(),
-        tags: arrayFromInput(formData.get("tags")),
+        tags: extractHashtags(caption),
         eligibility: linesFromInput(formData.get("eligibility")),
         responsibilities: linesFromInput(formData.get("responsibilities")),
         requirements: linesFromInput(formData.get("requirements")),
@@ -1657,6 +1676,7 @@ async function initCreatePost(user, profile) {
         form.reset();
         existingAttachmentsState.length = 0;
         renderExistingAttachments();
+        syncCaptionCount();
         setStatus(
           status,
           nextStatus === "pending"

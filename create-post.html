@@ -51,8 +51,12 @@
               </div>
 
               <div class="md:col-span-2">
-                <label for="caption" class="block text-sm text-white/70 mb-2">Caption</label>
-                <textarea id="caption" name="caption" rows="4" class="w-full bg-white/10 rounded-2xl px-4 py-4 text-sm outline-none" placeholder="Write the opportunity summary..." required></textarea>
+                <label for="caption" class="block text-sm text-white/70 mb-2">Description</label>
+                <textarea id="caption" name="caption" rows="4" maxlength="150" class="w-full bg-white/10 rounded-2xl px-4 py-4 text-sm outline-none" placeholder="Write the opportunity summary in 150 characters or less. Add hashtags like #remote or #design." required></textarea>
+                <div class="mt-2 flex items-center justify-between gap-3 text-xs text-white/45">
+                  <p>Hashtags are picked up automatically from words that start with #.</p>
+                  <span id="captionCount">0/150</span>
+                </div>
               </div>
 
               <div class="md:col-span-2">
@@ -94,11 +98,6 @@
               <div>
                 <label for="deadlineAt" class="block text-sm text-white/70 mb-2">Deadline</label>
                 <input id="deadlineAt" name="deadlineAt" type="date" class="w-full bg-white/10 rounded-2xl px-4 py-3 text-sm outline-none" />
-              </div>
-
-              <div class="md:col-span-2">
-                <label for="tags" class="block text-sm text-white/70 mb-2">Tags</label>
-                <input id="tags" name="tags" type="text" class="w-full bg-white/10 rounded-2xl px-4 py-3 text-sm outline-none" placeholder="frontend, react, remote, portfolio" />
               </div>
             </div>
           </div>
