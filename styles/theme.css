@@ -188,3 +188,30 @@ input[type="file"]::file-selector-button {
 .theme-primary:hover {
   box-shadow: 0 18px 40px rgba(34, 197, 94, 0.3);
 }
+
+:where(a, button, summary, [role="button"]):not([disabled]) {
+  cursor: pointer;
+  transition:
+    transform 180ms ease,
+    opacity 180ms ease,
+    filter 180ms ease,
+    box-shadow 180ms ease,
+    border-color 180ms ease,
+    background-color 180ms ease;
+}
+
+@media (hover: hover) {
+  :where(a, button, summary, [role="button"]):not([disabled]):hover {
+    transform: translateY(-1px);
+    filter: brightness(1.04);
+  }
+}
+
+:where(a, button, summary, [role="button"]):not([disabled]):active {
+  transform: scale(0.98);
+}
+
+:where(a, button, summary, [role="button"]):focus-visible {
+  outline: 2px solid rgba(34, 211, 238, 0.75);
+  outline-offset: 2px;
+}
