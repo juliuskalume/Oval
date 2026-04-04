@@ -1158,6 +1158,11 @@ function paintVideoAudioButton(button, muted) {
   }
 }
 
+function opportunityActionButtons(container, action, opportunityId) {
+  return qsa(`[data-action="${action}"]`, container)
+    .filter((node) => node.dataset.id === opportunityId);
+}
+
 function syncFeedVideoAudioButton(section, muted) {
   paintVideoAudioButton(qs("[data-video-audio-button]", section), muted);
 }
@@ -1283,7 +1288,12 @@ async function bindOpportunityActionButtons(container, opportunities, states, us
           liked: Boolean(current.liked),
         };
         states.set(opportunity.id, nextState);
-        paintSaveActionButton(button, !current.saved);
+        const targetButtons = button.closest("#feedSlides")
+          ? opportunityActionButtons(container, "toggle-save", opportunity.id)
+          : [button];
+        targetButtons.forEach((targetButton) => {
+          paintSaveActionButton(targetButton, !current.saved);
+        });
         window.dispatchEvent(new CustomEvent("oval:state-changed", { detail: { opportunityId: opportunity.id, state: nextState } }));
         setStatus(statusTarget, current.saved ? "Removed from saved." : "Saved for later.", "success");
         return;
@@ -1302,7 +1312,12 @@ async function bindOpportunityActionButtons(container, opportunities, states, us
           applied: Boolean(current.applied),
         };
         states.set(opportunity.id, nextState);
-        paintLikeActionButton(button, nextLiked, opportunity.likesCount);
+        const likeButtons = button.closest("#feedSlides")
+          ? opportunityActionButtons(container, "toggle-like", opportunity.id)
+          : [button];
+        likeButtons.forEach((likeButton) => {
+          paintLikeActionButton(likeButton, nextLiked, opportunity.likesCount);
+        });
         setStatus(statusTarget, nextLiked ? "Added to likes." : "Removed from likes.", "success");
         return;
       }
@@ -1423,6 +1438,11 @@ async function initFeed(user) {
               }
             });
           }
+          const sections = Array.from(slides.children);
+          const sectionIndex = sections.indexOf(entry.target);
+          if (sectionIndex === sections.length - 1) {
+            appendFeedBatch();
+          }
           return;
         }
         if (video) {
@@ -1435,7 +1455,10 @@ async function initFeed(user) {
   );
 
   function appendFeedBatch() {
-    const batch = opportunities.slice(renderedCount, renderedCount + FEED_BATCH_SIZE);
+    const batch = Array.from({ length: FEED_BATCH_SIZE }, (_, index) => {
+      const sourceIndex = (renderedCount + index) % opportunities.length;
+      return opportunities[sourceIndex];
+    });
     if (!batch.length) {
       return false;
     }
@@ -1451,20 +1474,16 @@ async function initFeed(user) {
   }
 
   function ensureFeedBuffer() {
-    while (
-      renderedCount < opportunities.length
-      && slides.scrollHeight - slides.clientHeight <= slides.clientHeight * 0.5
-    ) {
+    let safety = 0;
+    while (slides.scrollHeight - slides.clientHeight <= slides.clientHeight * 0.5 && safety < 3) {
       if (!appendFeedBatch()) {
         break;
       }
+      safety += 1;
     }
   }
 
   function maybeAppendMore() {
-    if (renderedCount >= opportunities.length) {
-      return;
-    }
     const remainingDistance = slides.scrollHeight - slides.scrollTop - slides.clientHeight;
     if (remainingDistance <= slides.clientHeight * 1.5) {
       appendFeedBatch();
