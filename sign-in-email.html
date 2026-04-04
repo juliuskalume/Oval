@@ -26,33 +26,13 @@
           <button type="button" data-auth-mode="create">Create account</button>
         </div>
         <h1 id="emailAuthTitle" class="text-3xl font-bold">Sign in with email</h1>
-        <p id="emailAuthSubtitle" class="text-white/50 mt-2">Access saved posts, applied opportunities, and creator tools.</p>
-      </div>
-
-      <div class="mt-6 rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white/70">
-        Account type: <span data-role-preview class="font-semibold text-white">Seeker</span>
+        <p id="emailAuthSubtitle" class="text-white/50 mt-2">Access saved posts, applied opportunities, and posting tools.</p>
       </div>
 
       <form id="emailAuthForm" class="mt-6 space-y-4">
         <div data-create-only class="hidden">
           <label for="displayName" class="block text-sm text-white/70 mb-2">Display name</label>
           <input id="displayName" name="displayName" type="text" class="w-full bg-white/10 rounded-2xl px-4 py-4 text-white placeholder:text-white/30 outline-none" placeholder="Your name or organization" />
-        </div>
-
-        <div data-create-only class="hidden">
-          <label for="accountRole" class="block text-sm text-white/70 mb-2">Role</label>
-          <select id="accountRole" name="role" class="w-full bg-white/10 rounded-2xl px-4 py-4 text-white outline-none">
-            <option value="seeker" class="text-black">Seeker</option>
-            <option value="creator" class="text-black">Creator</option>
-          </select>
-        </div>
-
-        <div id="creatorTypeWrap" data-create-only class="hidden">
-          <label for="creatorType" class="block text-sm text-white/70 mb-2">Creator type</label>
-          <select id="creatorType" name="creatorType" class="w-full bg-white/10 rounded-2xl px-4 py-4 text-white outline-none">
-            <option value="individual" class="text-black">Individual</option>
-            <option value="company" class="text-black">Company</option>
-          </select>
         </div>
 
         <div>

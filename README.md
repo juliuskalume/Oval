@@ -6,8 +6,8 @@ Oval is a mobile-first opportunity discovery app prototype backed by Firebase on
 
 - Public browsing for feed, search, and details
 - Email/password and Google auth
-- Seeker actions for saved and applied states
-- Creator posting flow and dashboard
+- Unified user actions for saving, applying, posting, and dashboard tracking
+- Admin approval flow before posts go live publicly
 - Firebase Firestore and Storage rules templates
 
 ## Run locally

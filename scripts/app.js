@@ -27,8 +27,6 @@ import {
 } from "./firebase.js";
 import { DEMO_OPPORTUNITIES } from "./sample-data.js";
 
-const ROLE_KEY = "oval.desiredRole";
-const CREATOR_TYPE_KEY = "oval.desiredCreatorType";
 const RETURN_TO_KEY = "oval.returnTo";
 const DEFAULT_COVER =
   "https://images.unsplash.com/photo-1521737604893-d14cc237f11d?auto=format&fit=crop&w=1200&q=80";
@@ -99,24 +97,6 @@ function getPendingReturnTo(defaultPath) {
 
 function clearPendingReturnTo() {
   sessionStorage.removeItem(RETURN_TO_KEY);
-}
-
-function getDesiredRole() {
-  const stored = localStorage.getItem(ROLE_KEY);
-  return stored === "creator" ? "creator" : "seeker";
-}
-
-function setDesiredRole(role) {
-  localStorage.setItem(ROLE_KEY, role === "creator" ? "creator" : "seeker");
-}
-
-function getDesiredCreatorType() {
-  const stored = localStorage.getItem(CREATOR_TYPE_KEY);
-  return stored === "company" ? "company" : "individual";
-}
-
-function setDesiredCreatorType(value) {
-  localStorage.setItem(CREATOR_TYPE_KEY, value === "company" ? "company" : "individual");
 }
 
 function toDate(value) {
@@ -282,13 +262,7 @@ function sortByCreatedAtDesc(items) {
   });
 }
 
-function defaultBio(role, creatorType) {
-  if (role === "creator" && creatorType === "company") {
-    return "Sharing jobs, gigs, and scholarships with the Oval community.";
-  }
-  if (role === "creator") {
-    return "Posting opportunities and looking for emerging talent.";
-  }
+function defaultBio() {
   return "Open to new opportunities on Oval.";
 }
 
@@ -333,8 +307,6 @@ function statusMeta(status) {
 }
 
 async function ensureUserProfile(user, options = {}) {
-  const desiredRole = options.desiredRole || getDesiredRole();
-  const creatorType = desiredRole === "creator" ? options.creatorType || getDesiredCreatorType() : null;
   const profileRef = doc(db, "users", user.uid);
   const existing = await getDoc(profileRef);
 
@@ -354,7 +326,10 @@ async function ensureUserProfile(user, options = {}) {
       updates.username = uniqueUsername(data.displayName || user.displayName || user.email?.split("@")[0]);
     }
     if (!data.bio) {
-      updates.bio = defaultBio(data.role, data.creatorType);
+      updates.bio = defaultBio();
+    }
+    if (!data.role) {
+      updates.role = "member";
     }
     if (Object.keys(updates).length) {
       updates.updatedAt = Timestamp.now();
@@ -374,9 +349,8 @@ async function ensureUserProfile(user, options = {}) {
     username: uniqueUsername(displayName),
     email: user.email || "",
     photoURL: user.photoURL || DEFAULT_AVATAR,
-    role: desiredRole === "creator" ? "creator" : "seeker",
-    creatorType,
-    bio: defaultBio(desiredRole, creatorType),
+    role: options.role || "member",
+    bio: defaultBio(),
     followingCount: 0,
     followersCount: 0,
     createdAt: Timestamp.now(),
@@ -511,12 +485,7 @@ async function uploadFile(file, folder, uid) {
 }
 
 function redirectAfterAuth(profile) {
-  const defaultPath =
-    profile?.role === "admin"
-      ? "admin-moderation.html"
-      : profile?.role === "creator"
-        ? "creator-dashboard.html"
-        : "feed.html";
+  const defaultPath = profile?.role === "admin" ? "admin-moderation.html" : "feed.html";
   const target = getPendingReturnTo(defaultPath);
   clearPendingReturnTo();
   location.href = target;
@@ -536,69 +505,11 @@ function applySkipLinks(root = document) {
   });
 }
 
-function fillRolePreview(root) {
-  const role = getDesiredRole();
-  const creatorType = getDesiredCreatorType();
-  qsa("[data-role-preview]", root).forEach((node) => {
-    node.textContent = role === "creator" ? `Creator${creatorType === "company" ? " (Company)" : " (Individual)"}` : "Seeker";
-  });
-}
-
-function attachRolePicker(root) {
-  const roleButtons = qsa("[data-role]", root);
-  const creatorTypeButtons = qsa("[data-creator-type]", root);
-  const creatorTypeRow = qs("[data-creator-type-row]", root);
-
-  function paint() {
-    const role = getDesiredRole();
-    const creatorType = getDesiredCreatorType();
-    roleButtons.forEach((button) => {
-      const active = button.dataset.role === role;
-      if (button.dataset.compact === "true") {
-        button.className = active
-          ? "px-4 py-2 rounded-full bg-white text-black text-sm font-semibold"
-          : "px-4 py-2 rounded-full bg-white/10 text-white text-sm font-semibold border border-white/10";
-      } else {
-        button.className = active
-          ? "rounded-3xl border border-white bg-white text-black p-5 text-left transition"
-          : "rounded-3xl border border-white/10 bg-white/5 text-white p-5 text-left transition";
-      }
-    });
-    creatorTypeButtons.forEach((button) => {
-      const active = button.dataset.creatorType === creatorType;
-      button.className = active
-        ? "px-4 py-2 rounded-full bg-white text-black text-sm font-semibold"
-        : "px-4 py-2 rounded-full bg-white/10 text-white text-sm font-semibold border border-white/10";
-    });
-    if (creatorTypeRow) {
-      creatorTypeRow.classList.toggle("hidden", role !== "creator");
-    }
-    fillRolePreview(root);
-  }
-
-  roleButtons.forEach((button) => {
-    button.addEventListener("click", () => {
-      setDesiredRole(button.dataset.role);
-      paint();
-    });
-  });
-
-  creatorTypeButtons.forEach((button) => {
-    button.addEventListener("click", () => {
-      setDesiredCreatorType(button.dataset.creatorType);
-      paint();
-    });
-  });
-
-  paint();
-}
-
 async function initOnboarding(user, profile) {
   if (user && profile) {
     redirectAfterAuth(profile);
     return;
   }
-  attachRolePicker(document);
   applySkipLinks(document);
   qsa("[data-auth-link]").forEach((link) => {
     link.addEventListener("click", () => {
@@ -617,17 +528,11 @@ async function initEmailAuth(user, profile) {
   const form = qs("#emailAuthForm");
   const modeButtons = qsa("[data-auth-mode]");
   const createOnly = qsa("[data-create-only]");
-  const roleSelect = qs("#accountRole");
-  const creatorTypeWrap = qs("#creatorTypeWrap");
-  const creatorTypeField = qs("#creatorType");
   const title = qs("#emailAuthTitle");
   const subtitle = qs("#emailAuthSubtitle");
   const submit = qs("#emailAuthSubmit");
   const status = qs("#emailAuthStatus");
   let mode = "signin";
-
-  roleSelect.value = getDesiredRole();
-  creatorTypeField.value = getDesiredCreatorType();
 
   function paint() {
     const isCreate = mode === "create";
@@ -639,13 +544,11 @@ async function initEmailAuth(user, profile) {
     createOnly.forEach((field) => {
       field.classList.toggle("hidden", !isCreate);
     });
-    creatorTypeWrap.classList.toggle("hidden", !(isCreate && roleSelect.value === "creator"));
     title.textContent = isCreate ? "Create your account" : "Sign in with email";
     subtitle.textContent = isCreate
-      ? "Create a seeker or creator account with email and password."
+      ? "Create your Oval account with email and password."
       : "Access saved posts, applied opportunities, and posting tools.";
     submit.textContent = isCreate ? "Create account" : "Sign in";
-    fillRolePreview(document);
   }
 
   modeButtons.forEach((button) => {
@@ -653,16 +556,6 @@ async function initEmailAuth(user, profile) {
       mode = button.dataset.authMode;
       paint();
     });
-  });
-
-  roleSelect.addEventListener("change", () => {
-    setDesiredRole(roleSelect.value);
-    paint();
-  });
-
-  creatorTypeField.addEventListener("change", () => {
-    setDesiredCreatorType(creatorTypeField.value);
-    paint();
   });
 
   form.addEventListener("submit", async (event) => {
@@ -674,8 +567,6 @@ async function initEmailAuth(user, profile) {
     const email = String(formData.get("email") || "").trim();
     const password = String(formData.get("password") || "").trim();
     const displayName = String(formData.get("displayName") || "").trim();
-    const role = String(formData.get("role") || "seeker");
-    const creatorType = String(formData.get("creatorType") || "individual");
 
     try {
       if (mode === "create") {
@@ -687,13 +578,7 @@ async function initEmailAuth(user, profile) {
         }
         const credential = await createUserWithEmailAndPassword(auth, email, password);
         await updateProfile(credential.user, { displayName });
-        setDesiredRole(role);
-        setDesiredCreatorType(creatorType);
-        const nextProfile = await ensureUserProfile(credential.user, {
-          displayName,
-          desiredRole: role,
-          creatorType,
-        });
+        const nextProfile = await ensureUserProfile(credential.user, { displayName });
         redirectAfterAuth(nextProfile);
         return;
       }
@@ -717,7 +602,6 @@ async function initGoogleAuth(user, profile) {
     redirectAfterAuth(profile);
     return;
   }
-  attachRolePicker(document);
   applySkipLinks(document);
   const button = qs("#googleContinue");
   const status = qs("#googleStatus");
@@ -726,13 +610,8 @@ async function initGoogleAuth(user, profile) {
     button.disabled = true;
     setStatus(status, "");
     try {
-      const role = getDesiredRole();
-      const creatorType = getDesiredCreatorType();
       const credential = await signInWithPopup(auth, googleProvider);
-      const nextProfile = await ensureUserProfile(credential.user, {
-        desiredRole: role,
-        creatorType,
-      });
+      const nextProfile = await ensureUserProfile(credential.user);
       redirectAfterAuth(nextProfile);
     } catch (error) {
       console.error(error);
@@ -1704,7 +1583,6 @@ async function initCreatePost(user, profile) {
         creatorName: profile.displayName,
         creatorHandle: `@${profile.username}`,
         creatorPhotoURL: profile.photoURL || DEFAULT_AVATAR,
-        creatorType: profile.creatorType || "individual",
         status: nextStatus,
         updatedAt: Timestamp.now(),
       };

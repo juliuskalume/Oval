@@ -17,16 +17,8 @@ service cloud.firestore {
       return currentUserExists() && currentRole() == 'admin';
     }
 
-    function isCreator() {
-      return currentUserExists() && (currentRole() == 'creator' || currentRole() == 'admin');
-    }
-
     function validRole(role) {
-      return role == 'seeker' || role == 'creator';
-    }
-
-    function validCreatorType(value) {
-      return value == null || value == 'individual' || value == 'company';
+      return role == 'member' || role == 'seeker' || role == 'creator' || role == 'admin';
     }
 
     function validOpportunityStatus(value) {
@@ -50,15 +42,13 @@ service cloud.firestore {
 
       allow create: if signedIn()
         && request.auth.uid == uid
-        && validRole(request.resource.data.role)
-        && validCreatorType(request.resource.data.creatorType);
+        && validRole(request.resource.data.role);
 
       allow update: if isAdmin()
         || (
           signedIn()
           && request.auth.uid == uid
           && request.resource.data.role == resource.data.role
-          && request.resource.data.creatorType == resource.data.creatorType
         );
 
       allow delete: if isAdmin();
