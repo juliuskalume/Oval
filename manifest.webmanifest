@@ -1,0 +1,77 @@
+{
+  "id": "/index.html",
+  "name": "Oval",
+  "short_name": "Oval",
+  "description": "A mobile-first opportunity discovery app for finding, saving, tracking, and publishing opportunities.",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "display_override": [
+    "standalone",
+    "minimal-ui",
+    "browser"
+  ],
+  "background_color": "#020617",
+  "theme_color": "#020617",
+  "orientation": "portrait",
+  "lang": "en",
+  "dir": "ltr",
+  "categories": [
+    "business",
+    "productivity",
+    "social"
+  ],
+  "prefer_related_applications": false,
+  "icons": [
+    {
+      "src": "assets/pwa/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "assets/pwa/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "Browse Feed",
+      "short_name": "Feed",
+      "url": "./feed.html",
+      "icons": [
+        {
+          "src": "assets/pwa/icon-192.png",
+          "sizes": "192x192",
+          "type": "image/png"
+        }
+      ]
+    },
+    {
+      "name": "Search Opportunities",
+      "short_name": "Search",
+      "url": "./search.html",
+      "icons": [
+        {
+          "src": "assets/pwa/icon-192.png",
+          "sizes": "192x192",
+          "type": "image/png"
+        }
+      ]
+    },
+    {
+      "name": "Create Post",
+      "short_name": "Post",
+      "url": "./create-post.html",
+      "icons": [
+        {
+          "src": "assets/pwa/icon-192.png",
+          "sizes": "192x192",
+          "type": "image/png"
+        }
+      ]
+    }
+  ]
+}

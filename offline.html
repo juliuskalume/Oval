@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <meta name="theme-color" content="#020617" />
+  <title>Oval - Offline</title>
+  <link rel="manifest" href="manifest.webmanifest" />
+  <link rel="icon" type="image/png" sizes="192x192" href="assets/pwa/icon-192.png" />
+  <link rel="apple-touch-icon" sizes="180x180" href="assets/pwa/apple-touch-icon.png" />
+  <style>
+    :root {
+      --bg: #020617;
+      --surface: rgba(11, 18, 32, 0.92);
+      --border: rgba(148, 163, 184, 0.18);
+      --text: #e5e7eb;
+      --muted: #94a3b8;
+      --accent: #22c55e;
+      --accent-2: #22d3ee;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      padding: 24px;
+      font-family: "Segoe UI", sans-serif;
+      color: var(--text);
+      background:
+        radial-gradient(circle at top, rgba(34, 197, 94, 0.14), transparent 32%),
+        radial-gradient(circle at 72% 18%, rgba(34, 211, 238, 0.12), transparent 28%),
+        linear-gradient(180deg, rgba(15, 23, 42, 0.98), rgba(2, 6, 23, 1));
+    }
+
+    .shell {
+      width: min(100%, 420px);
+      padding: 28px;
+      border-radius: 28px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      box-shadow: 0 24px 72px rgba(2, 6, 23, 0.58);
+      text-align: center;
+    }
+
+    .orb {
+      width: 104px;
+      aspect-ratio: 1;
+      margin: 0 auto 22px;
+      border-radius: 999px;
+      position: relative;
+      display: grid;
+      place-items: center;
+      background: linear-gradient(180deg, rgba(15, 23, 42, 0.98), rgba(2, 6, 23, 0.94));
+      border: 1px solid rgba(148, 163, 184, 0.18);
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05), 0 18px 42px rgba(2, 6, 23, 0.42);
+      overflow: hidden;
+    }
+
+    .orb::before,
+    .orb::after {
+      content: "";
+      position: absolute;
+      inset: 0;
+      border-radius: inherit;
+    }
+
+    .orb::before {
+      inset: 6px;
+      border: 4px solid transparent;
+      border-top-color: var(--accent);
+      border-right-color: var(--accent-2);
+      animation: spin 1800ms linear infinite;
+    }
+
+    .orb::after {
+      inset: 18px;
+      border: 3px solid transparent;
+      border-left-color: rgba(34, 197, 94, 0.92);
+      border-bottom-color: rgba(34, 211, 238, 0.92);
+      animation: spin-reverse 1300ms linear infinite;
+    }
+
+    .wordmark {
+      position: relative;
+      z-index: 1;
+      font-weight: 800;
+      letter-spacing: 0.34em;
+      text-indent: 0.34em;
+      font-size: 0.94rem;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: 1.4rem;
+    }
+
+    p {
+      margin: 12px 0 0;
+      color: var(--muted);
+      line-height: 1.6;
+    }
+
+    .actions {
+      display: flex;
+      gap: 12px;
+      margin-top: 24px;
+      justify-content: center;
+      flex-wrap: wrap;
+    }
+
+    a,
+    button {
+      border: 0;
+      border-radius: 16px;
+      padding: 14px 18px;
+      font: inherit;
+      cursor: pointer;
+      transition: transform 180ms ease, filter 180ms ease;
+      text-decoration: none;
+    }
+
+    a:hover,
+    button:hover {
+      transform: translateY(-1px);
+      filter: brightness(1.04);
+    }
+
+    .primary {
+      background: linear-gradient(135deg, var(--accent), var(--accent-2));
+      color: #022c22;
+      font-weight: 700;
+    }
+
+    .secondary {
+      background: rgba(15, 23, 42, 0.92);
+      color: var(--text);
+      border: 1px solid var(--border);
+    }
+
+    @keyframes spin {
+      to {
+        transform: rotate(360deg);
+      }
+    }
+
+    @keyframes spin-reverse {
+      to {
+        transform: rotate(-360deg);
+      }
+    }
+  </style>
+</head>
+<body>
+  <main class="shell">
+    <div class="orb" aria-hidden="true">
+      <span class="wordmark">OVAL</span>
+    </div>
+    <h1>You are offline</h1>
+    <p>Oval is still installed, but this screen needs a connection or a cached page to keep going.</p>
+    <div class="actions">
+      <a class="primary" href="feed.html">Try feed</a>
+      <button class="secondary" type="button" onclick="location.reload()">Retry</button>
+    </div>
+  </main>
+</body>
+</html>

@@ -37,6 +37,7 @@ const FEED_CAPTION_LENGTH = 100;
 const FEED_BATCH_SIZE = 4;
 const FEED_VIDEO_SOUND_KEY = "oval.feedVideoSoundEnabled";
 const APP_LOADER_MIN_MS = 420;
+const PWA_THEME_COLOR = "#020617";
 const DEFAULT_COVER =
   "https://images.unsplash.com/photo-1521737604893-d14cc237f11d?auto=format&fit=crop&w=1200&q=80";
 const DEFAULT_AVATAR =
@@ -60,6 +61,77 @@ function qs(selector, root = document) {
 
 function qsa(selector, root = document) {
   return Array.from(root.querySelectorAll(selector));
+}
+
+function ensureMetaTag(selector, attributes, content) {
+  let node = document.head.querySelector(selector);
+  if (!node) {
+    node = document.createElement("meta");
+    Object.entries(attributes).forEach(([key, value]) => {
+      node.setAttribute(key, value);
+    });
+    document.head.appendChild(node);
+  }
+  node.setAttribute("content", content);
+  return node;
+}
+
+function ensureLinkTag(selector, attributes) {
+  let node = document.head.querySelector(selector);
+  if (!node) {
+    node = document.createElement("link");
+    document.head.appendChild(node);
+  }
+  Object.entries(attributes).forEach(([key, value]) => {
+    node.setAttribute(key, value);
+  });
+  return node;
+}
+
+function ensurePwaShellMeta() {
+  const viewport = document.head.querySelector('meta[name="viewport"]');
+  if (viewport) {
+    const current = viewport.getAttribute("content") || "";
+    if (!current.includes("viewport-fit=cover")) {
+      viewport.setAttribute("content", `${current.replace(/\s+$/g, "")}, viewport-fit=cover`);
+    }
+  } else {
+    ensureMetaTag('meta[name="viewport"]', { name: "viewport" }, "width=device-width, initial-scale=1.0, viewport-fit=cover");
+  }
+
+  if (!document.documentElement.lang) {
+    document.documentElement.lang = "en";
+  }
+
+  ensureMetaTag('meta[name="theme-color"]', { name: "theme-color" }, PWA_THEME_COLOR);
+  ensureMetaTag('meta[name="description"]', { name: "description" }, "A mobile-first opportunity discovery app for finding, saving, tracking, and publishing opportunities.");
+  ensureMetaTag('meta[name="application-name"]', { name: "application-name" }, "Oval");
+  ensureMetaTag('meta[name="apple-mobile-web-app-capable"]', { name: "apple-mobile-web-app-capable" }, "yes");
+  ensureMetaTag('meta[name="apple-mobile-web-app-status-bar-style"]', { name: "apple-mobile-web-app-status-bar-style" }, "black-translucent");
+  ensureMetaTag('meta[name="apple-mobile-web-app-title"]', { name: "apple-mobile-web-app-title" }, "Oval");
+  ensureMetaTag('meta[name="mobile-web-app-capable"]', { name: "mobile-web-app-capable" }, "yes");
+  ensureMetaTag('meta[name="msapplication-TileColor"]', { name: "msapplication-TileColor" }, PWA_THEME_COLOR);
+  ensureMetaTag('meta[name="format-detection"]', { name: "format-detection" }, "telephone=no");
+
+  ensureLinkTag('link[rel="manifest"]', { rel: "manifest", href: "manifest.webmanifest" });
+  ensureLinkTag('link[rel="icon"]', { rel: "icon", type: "image/png", sizes: "192x192", href: "assets/pwa/icon-192.png" });
+  ensureLinkTag('link[rel="apple-touch-icon"]', { rel: "apple-touch-icon", sizes: "180x180", href: "assets/pwa/apple-touch-icon.png" });
+}
+
+function registerServiceWorker() {
+  if (!("serviceWorker" in navigator)) {
+    return;
+  }
+  const isSecureContextLike = location.protocol === "https:" || location.hostname === "localhost" || location.hostname === "127.0.0.1";
+  if (!isSecureContextLike) {
+    return;
+  }
+
+  window.addEventListener("load", () => {
+    navigator.serviceWorker.register("service-worker.js", { scope: "./" }).catch((error) => {
+      console.warn("Service worker registration failed.", error);
+    });
+  }, { once: true });
 }
 
 let appLoaderShownAt = 0;
@@ -2455,8 +2527,10 @@ async function main() {
   }
 }
 
+ensurePwaShellMeta();
 showAppLoader();
 wireLoadingTransitions();
+registerServiceWorker();
 
 main()
   .catch((error) => {

@@ -1,1 +1,33 @@
-<!DOCTYPE html><html><head><meta http-equiv="refresh" content="0; url=onboarding.html"></head><body></body></html>
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <meta name="theme-color" content="#020617" />
+  <meta name="description" content="A mobile-first opportunity discovery app for finding, saving, tracking, and publishing opportunities." />
+  <link rel="manifest" href="manifest.webmanifest" />
+  <link rel="icon" type="image/png" sizes="192x192" href="assets/pwa/icon-192.png" />
+  <link rel="apple-touch-icon" sizes="180x180" href="assets/pwa/apple-touch-icon.png" />
+  <link rel="stylesheet" href="styles/theme.css" />
+  <title>Oval</title>
+</head>
+<body class="app-loading bg-black text-white min-h-screen">
+  <div id="appLoader" class="app-loader" aria-live="polite" aria-label="Loading Oval">
+    <div class="app-loader__shell" role="status">
+      <div class="app-loader__halo"></div>
+      <div class="app-loader__ring"></div>
+      <div class="app-loader__ring app-loader__ring--inner"></div>
+      <div class="app-loader__core">
+        <span class="app-loader__wordmark">OVAL</span>
+      </div>
+      <div class="app-loader__caption">Preparing your app shell</div>
+    </div>
+  </div>
+  <script>
+    const target = new URL("onboarding.html", location.href);
+    target.search = location.search;
+    target.hash = location.hash;
+    location.replace(target.toString());
+  </script>
+</body>
+</html>
