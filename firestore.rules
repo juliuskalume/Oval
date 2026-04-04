@@ -42,7 +42,7 @@ service cloud.firestore {
         && request.resource.data.savesCount <= resource.data.savesCount + 1
         && request.resource.data.appliedCount >= resource.data.appliedCount - 1
         && request.resource.data.appliedCount <= resource.data.appliedCount + 1
-        && request.resource.data.commentsCount >= resource.data.commentsCount
+        && request.resource.data.commentsCount >= resource.data.commentsCount - 1
         && request.resource.data.commentsCount <= resource.data.commentsCount + 1
         && request.resource.data.likesCount >= resource.data.likesCount - 1
         && request.resource.data.likesCount <= resource.data.likesCount + 1
@@ -82,6 +82,43 @@ service cloud.firestore {
           || (
             request.resource.data.parentId is string
             && request.resource.data.parentId.size() > 0
+          )
+        );
+    }
+
+    function validCommentUpdatePayload() {
+      return request.resource.data.keys().hasOnly([
+          'authorUid',
+          'authorName',
+          'authorHandle',
+          'authorPhotoURL',
+          'body',
+          'parentId',
+          'createdAt',
+          'updatedAt',
+          'deletedAt'
+        ])
+        && request.resource.data.authorUid == resource.data.authorUid
+        && request.resource.data.authorName == resource.data.authorName
+        && request.resource.data.authorHandle == resource.data.authorHandle
+        && request.resource.data.authorPhotoURL == resource.data.authorPhotoURL
+        && request.resource.data.parentId == resource.data.parentId
+        && request.resource.data.createdAt == resource.data.createdAt
+        && request.resource.data.updatedAt is timestamp
+        && (
+          request.resource.data.deletedAt == resource.data.deletedAt
+          || request.resource.data.deletedAt is timestamp
+        )
+        && (
+          (
+            request.resource.data.deletedAt == resource.data.deletedAt
+            && request.resource.data.body is string
+            && request.resource.data.body.size() > 0
+            && request.resource.data.body.size() <= 280
+          )
+          || (
+            request.resource.data.deletedAt is timestamp
+            && request.resource.data.body == ""
           )
         );
     }
@@ -166,7 +203,17 @@ service cloud.firestore {
           && get(/databases/$(database)/documents/opportunities/$(opportunityId)).data.status == 'published'
           && get(/databases/$(database)/documents/opportunities/$(opportunityId)).data.allowComments != false
           && validCommentPayload();
-        allow update, delete: if isAdmin();
+        allow update: if isAdmin()
+          || (
+            signedIn()
+            && resource.data.authorUid == request.auth.uid
+            && validCommentUpdatePayload()
+          );
+        allow delete: if isAdmin()
+          || (
+            signedIn()
+            && resource.data.authorUid == request.auth.uid
+          );
       }
     }
   }

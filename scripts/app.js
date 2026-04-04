@@ -806,6 +806,57 @@ function isOpportunityPoster(opportunity, comment) {
   );
 }
 
+function commentIsDeleted(comment) {
+  return Boolean(comment?.deletedAt);
+}
+
+function commentWasEdited(comment) {
+  if (!comment || commentIsDeleted(comment)) {
+    return false;
+  }
+  const created = toDate(comment.createdAt)?.getTime() || 0;
+  const updated = toDate(comment.updatedAt)?.getTime() || 0;
+  return updated > created + 1000;
+}
+
+function canManageComment(comment, user, profile, opportunity) {
+  if (!comment || !user || !profile || opportunity?.seeded) {
+    return false;
+  }
+  return profile.role === "admin" || comment.authorUid === user.uid;
+}
+
+function expandReplyLineage(commentId, comments, expandedReplyIds) {
+  let currentId = commentId;
+  while (currentId) {
+    expandedReplyIds.add(currentId);
+    const current = comments.find((item) => item.id === currentId);
+    currentId = current?.parentId || null;
+  }
+}
+
+function commentDescendantIds(commentId, comments) {
+  const childrenByParent = new Map();
+  comments.forEach((comment) => {
+    if (!comment.parentId) {
+      return;
+    }
+    if (!childrenByParent.has(comment.parentId)) {
+      childrenByParent.set(comment.parentId, []);
+    }
+    childrenByParent.get(comment.parentId).push(comment.id);
+  });
+
+  const descendants = [];
+  const stack = [...(childrenByParent.get(commentId) || [])];
+  while (stack.length) {
+    const nextId = stack.pop();
+    descendants.push(nextId);
+    stack.push(...(childrenByParent.get(nextId) || []));
+  }
+  return descendants;
+}
+
 async function createOpportunityComment(opportunity, user, profile, body, parentId = null) {
   if (!opportunity || !opportunity.id || opportunity.seeded) {
     throw new Error("Comments are not available for demo content.");
@@ -907,6 +958,89 @@ async function createOpportunityComment(opportunity, user, profile, body, parent
   }
 
   return nextComment;
+}
+
+async function updateOpportunityComment(opportunity, comment, body) {
+  if (!opportunity || !opportunity.id || opportunity.seeded) {
+    throw new Error("Comments are not available for demo content.");
+  }
+  if (!comment || !comment.id) {
+    throw new Error("Comment not found.");
+  }
+  if (commentIsDeleted(comment)) {
+    throw new Error("Deleted comments cannot be edited.");
+  }
+  const trimmedBody = String(body || "").trim();
+  if (!trimmedBody) {
+    throw new Error("Write a comment first.");
+  }
+  if (trimmedBody.length > MAX_COMMENT_LENGTH) {
+    throw new Error(`Comments can be up to ${MAX_COMMENT_LENGTH} characters.`);
+  }
+
+  const updatedAt = Timestamp.now();
+  await updateDoc(doc(db, "opportunities", opportunity.id, "comments", comment.id), {
+    body: trimmedBody,
+    updatedAt,
+  });
+  return {
+    ...comment,
+    body: trimmedBody,
+    updatedAt,
+  };
+}
+
+async function deleteOpportunityComment(opportunity, comment, comments) {
+  if (!opportunity || !opportunity.id || opportunity.seeded) {
+    throw new Error("Comments are not available for demo content.");
+  }
+  if (!comment || !comment.id) {
+    throw new Error("Comment not found.");
+  }
+  if (commentIsDeleted(comment)) {
+    throw new Error("This comment has already been deleted.");
+  }
+
+  const descendants = commentDescendantIds(comment.id, comments);
+  const commentRef = doc(db, "opportunities", opportunity.id, "comments", comment.id);
+
+  if (descendants.length) {
+    const deletedAt = Timestamp.now();
+    await updateDoc(commentRef, {
+      body: "",
+      deletedAt,
+      updatedAt: deletedAt,
+    });
+    return {
+      mode: "soft",
+      updatedComment: {
+        ...comment,
+        body: "",
+        deletedAt,
+        updatedAt: deletedAt,
+      },
+    };
+  }
+
+  const opportunityRef = doc(db, "opportunities", opportunity.id);
+  await runTransaction(db, async (transaction) => {
+    const opportunitySnapshotRef = await transaction.get(opportunityRef);
+    const commentSnapshotRef = await transaction.get(commentRef);
+    if (!opportunitySnapshotRef.exists() || !commentSnapshotRef.exists()) {
+      throw new Error("That comment is no longer available.");
+    }
+    const nextCount = Math.max(Number(opportunitySnapshotRef.data()?.commentsCount || 0) - 1, 0);
+    transaction.delete(commentRef);
+    transaction.update(opportunityRef, {
+      commentsCount: nextCount,
+      updatedAt: Timestamp.now(),
+    });
+  });
+
+  return {
+    mode: "hard",
+    removedIds: [comment.id],
+  };
 }
 
 async function requireUserForAction() {
@@ -1287,8 +1421,12 @@ function renderMultilineText(value) {
   return escapeHtml(String(value || "")).replace(/\r?\n/g, "<br>");
 }
 
-function renderCommentThread(comment, repliesByParent, opportunity, user, canReply, depth = 0) {
+function renderCommentThread(comment, repliesByParent, opportunity, user, profile, canReply, expandedReplyIds, depth = 0) {
   const replies = repliesByParent.get(comment.id) || [];
+  const deleted = commentIsDeleted(comment);
+  const edited = commentWasEdited(comment);
+  const expanded = expandedReplyIds.has(comment.id);
+  const canManage = canManageComment(comment, user, profile, opportunity) && !deleted;
   const badges = [];
   if (isOpportunityPoster(opportunity, comment)) {
     badges.push('<span class="text-[10px] px-2 py-1 rounded-full bg-white text-black">Poster</span>');
@@ -1307,16 +1445,29 @@ function renderCommentThread(comment, repliesByParent, opportunity, user, canRep
             ${comment.authorHandle ? `<span class="text-xs text-white/45">${escapeHtml(comment.authorHandle)}</span>` : ""}
             ${badges.join("")}
             <span class="text-xs text-white/40">${escapeHtml(formatRelativeDate(comment.createdAt) || "just now")}</span>
+            ${edited ? '<span class="text-[11px] text-white/35">edited</span>' : ""}
           </div>
-          <p class="text-sm text-white/80 mt-2 leading-6 break-words">${renderMultilineText(comment.body)}</p>
-          ${canReply ? `
-            <div class="mt-3 flex items-center gap-4 text-xs text-white/50">
-              <button type="button" class="hover:text-white transition" data-reply-id="${escapeHtml(comment.id)}" data-reply-name="${escapeHtml(comment.authorName || comment.authorHandle || "this user")}">Reply</button>
+          <p class="text-sm ${deleted ? "italic text-white/40" : "text-white/80"} mt-2 leading-6 break-words">${deleted ? "Comment deleted." : renderMultilineText(comment.body)}</p>
+          ${(replies.length || canReply || canManage) ? `
+            <div class="mt-3 flex items-center gap-4 flex-wrap text-xs text-white/50">
+              ${replies.length ? `
+                <button type="button" class="inline-flex items-center gap-1 hover:text-white transition" data-toggle-replies="${escapeHtml(comment.id)}">
+                  <span class="material-symbols-outlined text-[14px] leading-none">${expanded ? "expand_more" : "chevron_right"}</span>
+                  <span>${expanded ? "Hide" : "Show"} ${escapeHtml(String(replies.length))} ${replies.length === 1 ? "reply" : "replies"}</span>
+                </button>
+              ` : ""}
+              ${canReply && !deleted ? `
+                <button type="button" class="hover:text-white transition" data-reply-id="${escapeHtml(comment.id)}" data-reply-name="${escapeHtml(comment.authorName || comment.authorHandle || "this user")}">Reply</button>
+              ` : ""}
+              ${canManage ? `
+                <button type="button" class="hover:text-white transition" data-edit-comment="${escapeHtml(comment.id)}">Edit</button>
+                <button type="button" class="hover:text-red-200 transition" data-delete-comment="${escapeHtml(comment.id)}">Delete</button>
+              ` : ""}
             </div>
           ` : ""}
-          ${replies.length ? `
+          ${replies.length && expanded ? `
             <div class="mt-4 space-y-4">
-              ${replies.map((reply) => renderCommentThread(reply, repliesByParent, opportunity, user, canReply, depth + 1)).join("")}
+              ${replies.map((reply) => renderCommentThread(reply, repliesByParent, opportunity, user, profile, canReply, expandedReplyIds, depth + 1)).join("")}
             </div>
           ` : ""}
         </div>
@@ -1950,6 +2101,8 @@ async function initComments(user, profile) {
   const submit = qs("#commentSubmit");
   let comments = await loadOpportunityComments(opportunity.id);
   let replyTarget = null;
+  let editTarget = null;
+  const expandedReplyIds = new Set();
 
   if (backLink) {
     const fallbackHref = detailsUrl(opportunity.id);
@@ -1985,11 +2138,11 @@ async function initComments(user, profile) {
       return;
     }
     if (opportunity.seeded) {
-      subheading.textContent = `${opportunity.title} • sample conversation`;
+      subheading.textContent = `${opportunity.title} - sample conversation`;
       return;
     }
     if (opportunity.allowComments === false) {
-      subheading.textContent = `${opportunity.title} • comments are turned off`;
+      subheading.textContent = `${opportunity.title} - comments are turned off`;
       return;
     }
     subheading.textContent = opportunity.title;
@@ -2023,23 +2176,31 @@ async function initComments(user, profile) {
     `;
   }
 
-  function paintReplyBanner() {
+  function paintComposerBanner() {
     if (!replyBanner) {
       return;
     }
-    if (!replyTarget) {
+    if (!replyTarget && !editTarget) {
       replyBanner.className = "hidden";
       replyBanner.innerHTML = "";
       return;
     }
     replyBanner.className = "rounded-2xl bg-white/10 border border-white/10 px-4 py-3 text-sm flex items-center justify-between gap-3";
-    replyBanner.innerHTML = `
-      <div>
-        <p class="text-[10px] uppercase tracking-[0.18em] text-white/45">Replying to</p>
-        <p class="font-medium mt-1">${escapeHtml(replyTarget.name)}</p>
-      </div>
-      <button type="button" class="text-sm text-white/70" data-clear-reply>Cancel</button>
-    `;
+    replyBanner.innerHTML = editTarget
+      ? `
+        <div>
+          <p class="text-[10px] uppercase tracking-[0.18em] text-white/45">Editing comment</p>
+          <p class="font-medium mt-1">You are updating your comment</p>
+        </div>
+        <button type="button" class="text-sm text-white/70" data-clear-composer-context>Cancel</button>
+      `
+      : `
+        <div>
+          <p class="text-[10px] uppercase tracking-[0.18em] text-white/45">Replying to</p>
+          <p class="font-medium mt-1">${escapeHtml(replyTarget.name)}</p>
+        </div>
+        <button type="button" class="text-sm text-white/70" data-clear-composer-context>Cancel</button>
+      `;
   }
 
   function paintComposer() {
@@ -2076,12 +2237,20 @@ async function initComments(user, profile) {
     gate.className = "hidden";
     gate.innerHTML = "";
     form.classList.remove("hidden");
-    if (hint) {
-      hint.textContent = replyTarget
-        ? `Replying inside ${opportunity.title}`
-        : "Ask a question or leave something helpful.";
+    textarea.placeholder = editTarget
+      ? "Update your comment"
+      : "Ask a question or share something helpful.";
+    if (submit) {
+      submit.textContent = editTarget ? "Save" : "Send";
     }
-    paintReplyBanner();
+    if (hint) {
+      hint.textContent = editTarget
+        ? `Editing a comment in ${opportunity.title}`
+        : replyTarget
+          ? `Replying inside ${opportunity.title}`
+          : "Ask a question or leave something helpful.";
+    }
+    paintComposerBanner();
     syncComposerCount();
   }
 
@@ -2108,7 +2277,7 @@ async function initComments(user, profile) {
       `;
     } else {
       list.innerHTML = rootComments
-        .map((comment) => renderCommentThread(comment, repliesByParent, opportunity, user, canReply))
+        .map((comment) => renderCommentThread(comment, repliesByParent, opportunity, user, profile, canReply, expandedReplyIds))
         .join("");
     }
 
@@ -2117,8 +2286,64 @@ async function initComments(user, profile) {
   }
 
   list?.addEventListener("click", (event) => {
+    const toggleRepliesButton = event.target.closest("[data-toggle-replies]");
+    if (toggleRepliesButton) {
+      const commentId = toggleRepliesButton.dataset.toggleReplies;
+      if (expandedReplyIds.has(commentId)) {
+        expandedReplyIds.delete(commentId);
+      } else {
+        expandReplyLineage(commentId, comments, expandedReplyIds);
+      }
+      renderComments();
+      return;
+    }
+
     const replyButton = event.target.closest("[data-reply-id]");
-    if (!replyButton || opportunity.allowComments === false || opportunity.seeded) {
+    if (replyButton && opportunity.allowComments !== false && !opportunity.seeded) {
+      if (!user || !profile) {
+        setPendingReturnTo(toRelativePath());
+        location.href = `sign-in-email.html?returnTo=${encodeURIComponent(toRelativePath())}`;
+        return;
+      }
+      expandReplyLineage(replyButton.dataset.replyId, comments, expandedReplyIds);
+      replyTarget = {
+        id: replyButton.dataset.replyId,
+        name: replyButton.dataset.replyName || "this comment",
+      };
+      editTarget = null;
+      paintComposerBanner();
+      paintComposer();
+      renderComments();
+      textarea?.focus();
+      return;
+    }
+
+    const editButton = event.target.closest("[data-edit-comment]");
+    if (editButton) {
+      if (!user || !profile) {
+        setPendingReturnTo(toRelativePath());
+        location.href = `sign-in-email.html?returnTo=${encodeURIComponent(toRelativePath())}`;
+        return;
+      }
+      const targetComment = comments.find((item) => item.id === editButton.dataset.editComment);
+      if (!targetComment || !canManageComment(targetComment, user, profile, opportunity) || commentIsDeleted(targetComment)) {
+        return;
+      }
+      expandReplyLineage(targetComment.parentId || targetComment.id, comments, expandedReplyIds);
+      editTarget = targetComment;
+      replyTarget = null;
+      textarea.value = targetComment.body || "";
+      paintComposerBanner();
+      paintComposer();
+      renderComments();
+      syncComposerCount();
+      textarea?.focus();
+      textarea?.setSelectionRange(textarea.value.length, textarea.value.length);
+      return;
+    }
+
+    const deleteButton = event.target.closest("[data-delete-comment]");
+    if (!deleteButton) {
       return;
     }
     if (!user || !profile) {
@@ -2126,22 +2351,58 @@ async function initComments(user, profile) {
       location.href = `sign-in-email.html?returnTo=${encodeURIComponent(toRelativePath())}`;
       return;
     }
-    replyTarget = {
-      id: replyButton.dataset.replyId,
-      name: replyButton.dataset.replyName || "this comment",
-    };
-    paintReplyBanner();
-    paintComposer();
-    textarea?.focus();
+    const targetComment = comments.find((item) => item.id === deleteButton.dataset.deleteComment);
+    if (!targetComment || !canManageComment(targetComment, user, profile, opportunity) || commentIsDeleted(targetComment)) {
+      return;
+    }
+    const hasReplies = commentDescendantIds(targetComment.id, comments).length > 0;
+    const confirmed = window.confirm(
+      hasReplies
+        ? "Delete this comment? The comment text will be removed but replies will stay visible."
+        : "Delete this comment?",
+    );
+    if (!confirmed) {
+      return;
+    }
+    setStatus(status, "");
+    deleteOpportunityComment(opportunity, targetComment, comments)
+      .then((result) => {
+        if (result.mode === "soft") {
+          comments = comments.map((item) => (item.id === result.updatedComment.id ? result.updatedComment : item));
+          setStatus(status, "Comment deleted. Replies are still visible.", "success");
+        } else {
+          const removedIds = new Set(result.removedIds || []);
+          comments = comments.filter((item) => !removedIds.has(item.id));
+          opportunity.commentsCount = Math.max(Number(opportunity.commentsCount || 0) - removedIds.size, comments.length);
+          setStatus(status, "Comment deleted.", "success");
+        }
+        if (replyTarget?.id === targetComment.id) {
+          replyTarget = null;
+        }
+        if (editTarget?.id === targetComment.id) {
+          editTarget = null;
+          textarea.value = "";
+        }
+        renderComments();
+        paintComposer();
+        syncComposerCount();
+      })
+      .catch((error) => {
+        console.error(error);
+        setStatus(status, error.message || "Delete failed.", "error");
+      });
   });
 
   replyBanner?.addEventListener("click", (event) => {
-    if (!event.target.closest("[data-clear-reply]")) {
+    if (!event.target.closest("[data-clear-composer-context]")) {
       return;
     }
     replyTarget = null;
-    paintReplyBanner();
+    editTarget = null;
+    textarea.value = "";
+    paintComposerBanner();
     paintComposer();
+    syncComposerCount();
     textarea?.focus();
   });
 
@@ -2155,21 +2416,36 @@ async function initComments(user, profile) {
     submit.disabled = true;
     setStatus(status, "");
     try {
-      const nextComment = await createOpportunityComment(
-        opportunity,
-        user,
-        profile,
-        textarea.value,
-        replyTarget?.id || null,
-      );
-      comments = [...comments, nextComment];
-      opportunity.commentsCount = Math.max(Number(opportunity.commentsCount || 0) + 1, comments.length);
-      textarea.value = "";
-      replyTarget = null;
-      renderComments();
-      paintComposer();
-      syncComposerCount();
-      setStatus(status, nextComment.parentId ? "Reply posted." : "Comment posted.", "success");
+      if (editTarget) {
+        const updatedComment = await updateOpportunityComment(opportunity, editTarget, textarea.value);
+        comments = comments.map((item) => (item.id === updatedComment.id ? updatedComment : item));
+        textarea.value = "";
+        editTarget = null;
+        replyTarget = null;
+        renderComments();
+        paintComposer();
+        syncComposerCount();
+        setStatus(status, "Comment updated.", "success");
+      } else {
+        const nextComment = await createOpportunityComment(
+          opportunity,
+          user,
+          profile,
+          textarea.value,
+          replyTarget?.id || null,
+        );
+        comments = [...comments, nextComment];
+        opportunity.commentsCount = Math.max(Number(opportunity.commentsCount || 0) + 1, comments.length);
+        if (nextComment.parentId) {
+          expandReplyLineage(nextComment.parentId, comments, expandedReplyIds);
+        }
+        textarea.value = "";
+        replyTarget = null;
+        renderComments();
+        paintComposer();
+        syncComposerCount();
+        setStatus(status, nextComment.parentId ? "Reply posted." : "Comment posted.", "success");
+      }
     } catch (error) {
       console.error(error);
       setStatus(status, error.message || "Comment failed.", "error");
