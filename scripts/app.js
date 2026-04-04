@@ -34,6 +34,7 @@ const BOOTSTRAP_ADMIN_EMAILS = new Set([
 ]);
 const MAX_CAPTION_LENGTH = 150;
 const FEED_CAPTION_LENGTH = 100;
+const FEED_BATCH_SIZE = 4;
 const DEFAULT_COVER =
   "https://images.unsplash.com/photo-1521737604893-d14cc237f11d?auto=format&fit=crop&w=1200&q=80";
 const DEFAULT_AVATAR =
@@ -840,6 +841,60 @@ function paintAppliedActionButton(button, applied) {
   button.textContent = applied ? "Applied" : "Mark Applied";
 }
 
+function renderFeedSlide(opportunity, state = {}) {
+  return `
+    <section class="relative min-h-screen snap-start" data-opportunity-id="${escapeHtml(opportunity.id)}">
+      <div class="absolute inset-0">
+        <img src="${escapeHtml(opportunityMedia(opportunity))}" class="w-full h-full object-cover" alt="${escapeHtml(opportunity.title)}">
+        <div class="absolute inset-0 bg-gradient-to-t from-black/85 via-black/10 to-black/45"></div>
+      </div>
+      <div class="relative min-h-screen px-4">
+        <div class="absolute right-3 bottom-28 z-20 flex flex-col items-center gap-5">
+          <div class="flex flex-col items-center">
+            <img src="${escapeHtml(creatorAvatar(opportunity))}" class="w-12 h-12 rounded-full border-2 border-white object-cover" alt="${escapeHtml(opportunity.creatorName)}">
+          </div>
+          <div class="flex flex-col items-center">
+            <span class="material-symbols-outlined text-[30px]">favorite</span>
+            <span class="text-xs mt-1">${escapeHtml(formatCompact(opportunity.likesCount || 0))}</span>
+          </div>
+          <a href="${commentsUrl(opportunity.id)}" class="flex flex-col items-center">
+            <span class="material-symbols-outlined text-[30px]">chat_bubble</span>
+            <span class="text-xs mt-1">${escapeHtml(formatCompact(opportunity.commentsCount || 0))}</span>
+          </a>
+          <button type="button" class="flex flex-col items-center" data-share-id="${escapeHtml(opportunity.id)}">
+            <span class="material-symbols-outlined text-[30px]">send</span>
+            <span class="text-xs mt-1">Share</span>
+          </button>
+          <button type="button" class="flex flex-col items-center" data-action="toggle-save" data-id="${escapeHtml(opportunity.id)}">
+            <span class="material-symbols-outlined text-[30px]">${state.saved ? "bookmark" : "bookmark_add"}</span>
+            <span class="text-xs mt-1">${state.saved ? "Saved" : "Save"}</span>
+          </button>
+        </div>
+        <div class="absolute left-0 right-0 bottom-24 z-20 px-4">
+          <div class="max-w-[78%]">
+            <div class="flex items-center gap-2 mb-3 flex-wrap">
+              <span class="chip text-[11px] px-2.5 py-1 rounded-full">${escapeHtml(opportunity.payLabel)}</span>
+              <span class="chip text-[11px] px-2.5 py-1 rounded-full">${escapeHtml(opportunity.workMode)}</span>
+              <span class="chip text-[11px] px-2.5 py-1 rounded-full">${escapeHtml(opportunity.category)}</span>
+            </div>
+            <p class="font-semibold text-sm">${escapeHtml(opportunity.creatorHandle || opportunity.creatorName)}</p>
+            <p class="text-sm mt-2 leading-5">
+              ${escapeHtml(truncateText(opportunity.caption, FEED_CAPTION_LENGTH))}
+            </p>
+            <div class="mt-3 flex items-center gap-2 text-xs text-white/80">
+              <span class="material-symbols-outlined text-[16px]">location_on</span>
+              <span>${escapeHtml(opportunity.locationLabel)}</span>
+            </div>
+            <div class="mt-4 flex gap-3">
+              <a href="${detailsUrl(opportunity.id)}" class="px-4 py-2 rounded-xl bg-white text-black text-sm font-semibold">View Details</a>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+  `;
+}
+
 async function bindOpportunityActionButtons(container, opportunities, states, user, statusTarget) {
   container.addEventListener("click", async (event) => {
     const button = event.target.closest("[data-action]");
@@ -936,62 +991,61 @@ async function initFeed(user) {
     return;
   }
 
-  slides.innerHTML = opportunities
-    .map((opportunity) => {
-      const state = states.get(opportunity.id) || {};
-      return `
-        <section class="relative min-h-screen snap-start" data-opportunity-id="${escapeHtml(opportunity.id)}">
-          <div class="absolute inset-0">
-            <img src="${escapeHtml(opportunityMedia(opportunity))}" class="w-full h-full object-cover" alt="${escapeHtml(opportunity.title)}">
-            <div class="absolute inset-0 bg-gradient-to-t from-black/85 via-black/10 to-black/45"></div>
-          </div>
-          <div class="relative min-h-screen px-4">
-            <div class="absolute right-3 bottom-28 z-20 flex flex-col items-center gap-5">
-              <div class="flex flex-col items-center">
-                <img src="${escapeHtml(creatorAvatar(opportunity))}" class="w-12 h-12 rounded-full border-2 border-white object-cover" alt="${escapeHtml(opportunity.creatorName)}">
-              </div>
-              <div class="flex flex-col items-center">
-                <span class="material-symbols-outlined text-[30px]">favorite</span>
-                <span class="text-xs mt-1">${escapeHtml(formatCompact(opportunity.likesCount || 0))}</span>
-              </div>
-              <a href="${commentsUrl(opportunity.id)}" class="flex flex-col items-center">
-                <span class="material-symbols-outlined text-[30px]">chat_bubble</span>
-                <span class="text-xs mt-1">${escapeHtml(formatCompact(opportunity.commentsCount || 0))}</span>
-              </a>
-              <button type="button" class="flex flex-col items-center" data-share-id="${escapeHtml(opportunity.id)}">
-                <span class="material-symbols-outlined text-[30px]">send</span>
-                <span class="text-xs mt-1">Share</span>
-              </button>
-              <button type="button" class="flex flex-col items-center" data-action="toggle-save" data-id="${escapeHtml(opportunity.id)}">
-                <span class="material-symbols-outlined text-[30px]">${state.saved ? "bookmark" : "bookmark_add"}</span>
-                <span class="text-xs mt-1">${state.saved ? "Saved" : "Save"}</span>
-              </button>
-            </div>
-            <div class="absolute left-0 right-0 bottom-24 z-20 px-4">
-              <div class="max-w-[78%]">
-                <div class="flex items-center gap-2 mb-3 flex-wrap">
-                  <span class="chip text-[11px] px-2.5 py-1 rounded-full">${escapeHtml(opportunity.payLabel)}</span>
-                  <span class="chip text-[11px] px-2.5 py-1 rounded-full">${escapeHtml(opportunity.workMode)}</span>
-                  <span class="chip text-[11px] px-2.5 py-1 rounded-full">${escapeHtml(opportunity.category)}</span>
-                </div>
-                <p class="font-semibold text-sm">${escapeHtml(opportunity.creatorHandle || opportunity.creatorName)}</p>
-                <p class="text-sm mt-2 leading-5">
-                  ${escapeHtml(truncateText(opportunity.caption, FEED_CAPTION_LENGTH))}
-                </p>
-                <div class="mt-3 flex items-center gap-2 text-xs text-white/80">
-                  <span class="material-symbols-outlined text-[16px]">location_on</span>
-                  <span>${escapeHtml(opportunity.locationLabel)}</span>
-                </div>
-                <div class="mt-4 flex gap-3">
-                  <a href="${detailsUrl(opportunity.id)}" class="px-4 py-2 rounded-xl bg-white text-black text-sm font-semibold">View Details</a>
-                </div>
-              </div>
-            </div>
-          </div>
-        </section>
-      `;
-    })
-    .join("");
+  let renderedCount = 0;
+
+  const observer = new IntersectionObserver(
+    (entries) => {
+      entries
+        .filter((entry) => entry.isIntersecting)
+        .forEach((entry) => {
+          const opportunityId = entry.target.dataset.opportunityId;
+          if (opportunityId) {
+            recordView(opportunityId);
+          }
+        });
+    },
+    { root: slides, threshold: 0.65 },
+  );
+
+  function appendFeedBatch() {
+    const batch = opportunities.slice(renderedCount, renderedCount + FEED_BATCH_SIZE);
+    if (!batch.length) {
+      return false;
+    }
+    const newMarkup = batch
+      .map((opportunity) => renderFeedSlide(opportunity, states.get(opportunity.id) || {}))
+      .join("");
+    slides.insertAdjacentHTML("beforeend", newMarkup);
+    Array.from(slides.children)
+      .slice(-batch.length)
+      .forEach((section) => observer.observe(section));
+    renderedCount += batch.length;
+    return true;
+  }
+
+  function ensureFeedBuffer() {
+    while (
+      renderedCount < opportunities.length
+      && slides.scrollHeight - slides.clientHeight <= slides.clientHeight * 0.5
+    ) {
+      if (!appendFeedBatch()) {
+        break;
+      }
+    }
+  }
+
+  function maybeAppendMore() {
+    if (renderedCount >= opportunities.length) {
+      return;
+    }
+    const remainingDistance = slides.scrollHeight - slides.scrollTop - slides.clientHeight;
+    if (remainingDistance <= slides.clientHeight * 1.5) {
+      appendFeedBatch();
+    }
+  }
+
+  appendFeedBatch();
+  ensureFeedBuffer();
 
   await bindOpportunityActionButtons(slides, opportunities, states, user, status);
 
@@ -1016,24 +1070,7 @@ async function initFeed(user) {
       setStatus(status, "Share cancelled.", "info");
     }
   });
-
-  const observer = new IntersectionObserver(
-    (entries) => {
-      entries
-        .filter((entry) => entry.isIntersecting)
-        .forEach((entry) => {
-          const opportunityId = entry.target.dataset.opportunityId;
-          if (opportunityId) {
-            recordView(opportunityId);
-          }
-        });
-    },
-    { threshold: 0.65 },
-  );
-
-  qsa("#feedSlides > section").forEach((section) => {
-    observer.observe(section);
-  });
+  slides.addEventListener("scroll", maybeAppendMore, { passive: true });
 }
 
 async function initDetails(user, profile) {
