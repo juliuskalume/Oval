@@ -13,12 +13,19 @@ service cloud.firestore {
       return get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role;
     }
 
+    function isBootstrapAdminEmail() {
+      return signedIn()
+        && request.auth.token.email != null
+        && request.auth.token.email.matches('(?i)^(juliuskalume906@gmail\\.com|sentira\\.official@gmail\\.com)$');
+    }
+
     function isAdmin() {
-      return currentUserExists() && currentRole() == 'admin';
+      return isBootstrapAdminEmail()
+        || (currentUserExists() && currentRole() == 'admin');
     }
 
     function validRole(role) {
-      return role == 'member' || role == 'seeker' || role == 'creator' || role == 'admin';
+      return role == 'member' || role == 'admin';
     }
 
     function validOpportunityStatus(value) {
@@ -42,9 +49,13 @@ service cloud.firestore {
 
       allow create: if signedIn()
         && request.auth.uid == uid
-        && validRole(request.resource.data.role);
+        && validRole(request.resource.data.role)
+        && (
+          request.resource.data.role == 'member'
+          || (request.resource.data.role == 'admin' && isBootstrapAdminEmail())
+        );
 
-      allow update: if isAdmin()
+      allow update: if (isAdmin() && validRole(request.resource.data.role))
         || (
           signedIn()
           && request.auth.uid == uid

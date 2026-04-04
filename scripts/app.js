@@ -28,6 +28,10 @@ import {
 import { DEMO_OPPORTUNITIES } from "./sample-data.js";
 
 const RETURN_TO_KEY = "oval.returnTo";
+const BOOTSTRAP_ADMIN_EMAILS = new Set([
+  "juliuskalume906@gmail.com",
+  "sentira.official@gmail.com",
+]);
 const DEFAULT_COVER =
   "https://images.unsplash.com/photo-1521737604893-d14cc237f11d?auto=format&fit=crop&w=1200&q=80";
 const DEFAULT_AVATAR =
@@ -73,6 +77,14 @@ function slugify(value) {
 function uniqueUsername(source) {
   const base = slugify(source).slice(0, 18) || "oval-user";
   return `${base}${Math.floor(Math.random() * 900 + 100)}`;
+}
+
+function normalizeEmail(value) {
+  return String(value || "").trim().toLowerCase();
+}
+
+function isBootstrapAdminEmail(email) {
+  return BOOTSTRAP_ADMIN_EMAILS.has(normalizeEmail(email));
 }
 
 function toRelativePath() {
@@ -309,6 +321,8 @@ function statusMeta(status) {
 async function ensureUserProfile(user, options = {}) {
   const profileRef = doc(db, "users", user.uid);
   const existing = await getDoc(profileRef);
+  const email = normalizeEmail(user.email || options.email);
+  const shouldBeAdmin = isBootstrapAdminEmail(email);
 
   if (existing.exists()) {
     const data = existing.data();
@@ -319,8 +333,8 @@ async function ensureUserProfile(user, options = {}) {
     if (!data.photoURL && user.photoURL) {
       updates.photoURL = user.photoURL;
     }
-    if (!data.email && user.email) {
-      updates.email = user.email;
+    if (email && data.email !== email) {
+      updates.email = email;
     }
     if (!data.username) {
       updates.username = uniqueUsername(data.displayName || user.displayName || user.email?.split("@")[0]);
@@ -328,7 +342,9 @@ async function ensureUserProfile(user, options = {}) {
     if (!data.bio) {
       updates.bio = defaultBio();
     }
-    if (!data.role) {
+    if (shouldBeAdmin && data.role !== "admin") {
+      updates.role = "admin";
+    } else if (!data.role) {
       updates.role = "member";
     }
     if (Object.keys(updates).length) {
@@ -347,9 +363,9 @@ async function ensureUserProfile(user, options = {}) {
   const profile = {
     displayName,
     username: uniqueUsername(displayName),
-    email: user.email || "",
+    email,
     photoURL: user.photoURL || DEFAULT_AVATAR,
-    role: options.role || "member",
+    role: shouldBeAdmin ? "admin" : options.role || "member",
     bio: defaultBio(),
     followingCount: 0,
     followersCount: 0,
@@ -398,6 +414,34 @@ async function loadAllOpportunities() {
   } catch (error) {
     console.warn("Admin opportunity load timed out.", error);
     return [];
+  }
+}
+
+async function loadAdminUsers() {
+  try {
+    const snapshot = await withTimeout(
+      getDocs(query(collection(db, "users"), where("role", "==", "admin"))),
+    );
+    return sortByCreatedAtDesc(snapshot.docs.map(normalizeOpportunity));
+  } catch (error) {
+    console.warn("Admin user load timed out.", error);
+    return [];
+  }
+}
+
+async function findUserByEmail(email) {
+  const normalized = normalizeEmail(email);
+  if (!normalized) {
+    return null;
+  }
+  try {
+    const snapshot = await withTimeout(
+      getDocs(query(collection(db, "users"), where("email", "==", normalized))),
+    );
+    return snapshot.docs[0] ? normalizeOpportunity(snapshot.docs[0]) : null;
+  } catch (error) {
+    console.warn("User email lookup failed.", error);
+    return null;
   }
 }
 
@@ -1698,10 +1742,16 @@ async function initAdminModeration(user, profile) {
 
   const list = qs("#moderationQueue");
   const status = qs("#moderationStatus");
+  const adminForm = qs("#adminGrantForm");
+  const adminEmailInput = qs("#adminEmailInput");
+  const adminGrantStatus = qs("#adminGrantStatus");
+  const adminList = qs("#adminList");
   let opportunities = [];
+  let admins = [];
 
   async function refresh() {
     opportunities = await loadAllOpportunities();
+    admins = await loadAdminUsers();
     const pendingItems = opportunities.filter((item) => item.status === "pending");
     const publishedItems = opportunities.filter((item) => item.status === "published");
     const archivedItems = opportunities.filter((item) => item.status === "archived");
@@ -1709,6 +1759,23 @@ async function initAdminModeration(user, profile) {
     setText("#moderationPendingCount", String(pendingItems.length));
     setText("#moderationPublishedCount", String(publishedItems.length));
     setText("#moderationArchivedCount", String(archivedItems.length));
+    setText("#moderationAdminCount", String(admins.length));
+
+    if (adminList) {
+      adminList.innerHTML = admins.length
+        ? admins
+          .map((item) => `
+            <div class="flex items-center justify-between gap-3 rounded-2xl bg-white/5 border border-white/10 px-4 py-3">
+              <div class="min-w-0">
+                <p class="text-sm font-medium truncate">${escapeHtml(item.displayName || item.email || "Admin")}</p>
+                <p class="text-xs text-white/50 truncate mt-1">${escapeHtml(item.email || "")}</p>
+              </div>
+              <span class="text-[10px] px-2 py-1 rounded-full bg-emerald-500/15 text-emerald-200 border border-emerald-500/30">Admin</span>
+            </div>
+          `)
+          .join("")
+        : '<div class="rounded-2xl bg-white/5 border border-white/10 px-4 py-3 text-sm text-white/60">No admins found.</div>';
+    }
 
     if (!list) {
       return;
@@ -1750,6 +1817,53 @@ async function initAdminModeration(user, profile) {
       `)
       .join("");
   }
+
+  adminForm?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const email = normalizeEmail(adminEmailInput?.value);
+    if (!email) {
+      setStatus(adminGrantStatus, "Enter an email address first.", "error");
+      return;
+    }
+
+    if (admins.some((item) => normalizeEmail(item.email) === email)) {
+      setStatus(adminGrantStatus, "That user already has admin access.", "info");
+      return;
+    }
+
+    const submitButton = qs('button[type="submit"]', adminForm);
+    if (submitButton) {
+      submitButton.disabled = true;
+    }
+    setStatus(adminGrantStatus, "");
+
+    try {
+      const targetUser = await findUserByEmail(email);
+      if (!targetUser) {
+        throw new Error("That email has no Oval account yet. Have them sign in once first.");
+      }
+
+      await updateDoc(doc(db, "users", targetUser.id), {
+        role: "admin",
+        updatedAt: Timestamp.now(),
+      });
+      await createNotification(targetUser.id, {
+        type: "admin-granted",
+        title: "Admin access granted",
+        body: "You can now review pending posts in Oval.",
+      });
+      adminForm.reset();
+      setStatus(adminGrantStatus, "Admin access granted.", "success");
+      await refresh();
+    } catch (error) {
+      console.error(error);
+      setStatus(adminGrantStatus, error.message || "Admin grant failed.", "error");
+    } finally {
+      if (submitButton) {
+        submitButton.disabled = false;
+      }
+    }
+  });
 
   list?.addEventListener("click", async (event) => {
     const button = event.target.closest("[data-moderation-action]");

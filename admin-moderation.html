@@ -42,9 +42,28 @@
             <p class="text-sm text-white/60">Archived posts</p>
             <p id="moderationArchivedCount" class="text-2xl font-bold mt-2">0</p>
           </div>
+          <div class="rounded-2xl bg-white/5 border border-white/10 p-4">
+            <p class="text-sm text-white/60">Admins</p>
+            <p id="moderationAdminCount" class="text-2xl font-bold mt-2">0</p>
+          </div>
         </div>
 
         <div class="p-4 md:p-6">
+          <div class="rounded-3xl bg-white/5 border border-white/10 p-4 mb-4">
+            <div class="flex items-center justify-between gap-3 flex-wrap">
+              <div>
+                <h2 class="font-semibold">Admin access</h2>
+                <p class="text-sm text-white/60 mt-1">Promote an existing Oval user by email. They must have signed in at least once.</p>
+              </div>
+            </div>
+            <form id="adminGrantForm" class="mt-4 flex flex-col md:flex-row gap-3">
+              <input id="adminEmailInput" type="email" placeholder="admin@example.com" class="flex-1 bg-white/10 border border-white/10 rounded-2xl px-4 py-3 text-sm outline-none" />
+              <button type="submit" class="px-5 py-3 rounded-2xl bg-white text-black font-semibold whitespace-nowrap">Grant admin</button>
+            </form>
+            <div id="adminGrantStatus" class="hidden mt-3"></div>
+            <div id="adminList" class="mt-4 space-y-3"></div>
+          </div>
+
           <div class="flex flex-wrap gap-2 mb-4">
             <span class="chip active-chip px-4 py-2 rounded-full text-sm">Pending queue</span>
             <span class="chip px-4 py-2 rounded-full text-sm">Approve to publish</span>
