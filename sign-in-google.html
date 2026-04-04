@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Oval - Sign in with Google</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" />
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@24,500,0,0" />
+  <style>
+    body { font-family: Inter, sans-serif; }
+    .phone { max-width: 430px; margin: 0 auto; min-height: 100vh; background: #000; position: relative; overflow: hidden; }
+  </style>
+</head>
+<body data-page="sign-in-google" class="bg-black min-h-screen text-white">
+  <div class="phone bg-black flex flex-col justify-center p-5">
+    <a href="onboarding.html" class="inline-flex w-10 h-10 rounded-full bg-white/5 items-center justify-center absolute top-5 left-5">
+      <span class="material-symbols-outlined">arrow_back</span>
+    </a>
+
+    <div class="text-center">
+      <div class="w-20 h-20 rounded-[28px] bg-white text-black mx-auto flex items-center justify-center">
+        <span class="material-symbols-outlined text-[36px]">account_circle</span>
+      </div>
+      <h1 class="text-3xl font-bold mt-8">Continue with Google</h1>
+      <p class="text-white/50 mt-2 px-6">Use your Google account to join Oval and sync your saved posts, applied opportunities, and creator tools.</p>
+
+      <div class="mt-6 rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white/70">
+        Account type: <span data-role-preview class="font-semibold text-white">Seeker</span>
+      </div>
+
+      <div class="mt-4 flex justify-center gap-2">
+        <button type="button" data-role="seeker" data-compact="true">Seeker</button>
+        <button type="button" data-role="creator" data-compact="true">Creator</button>
+      </div>
+
+      <div class="mt-3 flex justify-center gap-2" data-creator-type-row>
+        <button type="button" data-creator-type="individual">Individual</button>
+        <button type="button" data-creator-type="company">Company</button>
+      </div>
+
+      <div id="googleStatus" class="hidden mt-5"></div>
+
+      <button id="googleContinue" type="button" class="mt-8 w-full bg-white text-black rounded-2xl py-4 font-semibold flex items-center justify-center gap-2">
+        <span class="material-symbols-outlined">login</span>
+        Continue with Google
+      </button>
+
+      <p class="text-white/50 text-sm mt-5">By continuing, you agree to Oval's terms and privacy policy.</p>
+      <div class="mt-3">
+        <a data-skip-link href="feed.html" class="text-xs text-white/45 hover:text-white/70 transition">Skip</a>
+      </div>
+    </div>
+  </div>
+  <script type="module" src="scripts/app.js"></script>
+</body>
+</html>

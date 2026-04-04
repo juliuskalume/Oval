@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Oval - Opportunity Details</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" />
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@24,500,0,0" />
+  <style>
+    body { font-family: Inter, sans-serif; }
+    .phone { max-width: 430px; margin: 0 auto; min-height: 100vh; background: #000; position: relative; overflow: hidden; }
+    .glass { background: rgba(255,255,255,.06); backdrop-filter: blur(12px); border: 1px solid rgba(255,255,255,.08); }
+    .chip { border: 1px solid rgba(255,255,255,.12); background: rgba(255,255,255,.06); }
+    .hide-scrollbar::-webkit-scrollbar { display: none; }
+    .hide-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+    .material-symbols-outlined { font-variation-settings: 'FILL' 0, 'wght' 500, 'GRAD' 0, 'opsz' 24; }
+  </style>
+</head>
+<body data-page="details" class="bg-black text-white min-h-screen">
+  <div class="phone bg-black flex flex-col">
+    <div class="relative h-72">
+      <img id="detailsCover" src="" alt="Opportunity cover" class="w-full h-full object-cover" />
+      <div class="absolute inset-0 bg-gradient-to-t from-black via-black/20 to-black/30"></div>
+
+      <div class="absolute top-0 left-0 right-0 z-20 px-4 pt-5">
+        <div class="flex items-center justify-between">
+          <a href="feed.html" class="w-10 h-10 rounded-full glass flex items-center justify-center">
+            <span class="material-symbols-outlined">arrow_back</span>
+          </a>
+
+          <div class="flex items-center gap-2">
+            <button type="button" class="w-10 h-10 rounded-full glass flex items-center justify-center">
+              <span class="material-symbols-outlined">ios_share</span>
+            </button>
+            <button type="button" data-details-save class="w-10 h-10 rounded-full glass flex items-center justify-center">
+              <span class="material-symbols-outlined">bookmark_add</span>
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <div class="absolute left-4 right-4 bottom-4 z-20">
+        <div id="detailsChips" class="flex items-center gap-2 mb-3 flex-wrap"></div>
+        <h1 id="detailsTitle" class="text-2xl font-bold leading-tight"></h1>
+        <div class="flex items-center gap-2 mt-2 text-sm text-white/80">
+          <img id="detailsCreatorAvatar" src="" alt="Creator" class="w-6 h-6 rounded-full object-cover" />
+          <span id="detailsCreatorName"></span>
+        </div>
+      </div>
+    </div>
+
+    <div class="flex-1 overflow-y-auto hide-scrollbar px-4 py-5 pb-40 space-y-5">
+      <div class="glass rounded-3xl p-4">
+        <div class="grid grid-cols-2 gap-3 text-sm">
+          <div>
+            <p class="text-white/50">Location</p>
+            <div class="flex items-center gap-2 mt-1">
+              <span class="material-symbols-outlined text-[18px]">location_on</span>
+              <span id="detailsLocation"></span>
+            </div>
+          </div>
+          <div>
+            <p class="text-white/50">Work style</p>
+            <div class="flex items-center gap-2 mt-1">
+              <span class="material-symbols-outlined text-[18px]">laptop_mac</span>
+              <span id="detailsWorkMode"></span>
+            </div>
+          </div>
+          <div>
+            <p class="text-white/50">Compensation</p>
+            <div class="flex items-center gap-2 mt-1">
+              <span class="material-symbols-outlined text-[18px]">payments</span>
+              <span id="detailsCompensation"></span>
+            </div>
+          </div>
+          <div>
+            <p class="text-white/50">Deadline</p>
+            <div class="flex items-center gap-2 mt-1">
+              <span class="material-symbols-outlined text-[18px]">event</span>
+              <span id="detailsDeadline"></span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div>
+        <h2 class="text-lg font-semibold mb-2">Overview</h2>
+        <p id="detailsCaption" class="text-sm leading-6 text-white/75"></p>
+      </div>
+
+      <div>
+        <h2 class="text-lg font-semibold mb-2">Eligibility</h2>
+        <div id="detailsEligibility" class="space-y-3"></div>
+      </div>
+
+      <div>
+        <h2 class="text-lg font-semibold mb-2">Responsibilities</h2>
+        <div id="detailsResponsibilities" class="space-y-3"></div>
+      </div>
+
+      <div>
+        <h2 class="text-lg font-semibold mb-2">Requirements</h2>
+        <div id="detailsRequirements" class="flex flex-wrap gap-2"></div>
+      </div>
+
+      <div>
+        <h2 class="text-lg font-semibold mb-2">Tags</h2>
+        <div id="detailsTags" class="flex flex-wrap gap-2"></div>
+      </div>
+
+      <div>
+        <h2 class="text-lg font-semibold mb-2">Perks</h2>
+        <div id="detailsPerks" class="space-y-3"></div>
+      </div>
+
+      <div id="detailsAttachmentsWrap">
+        <h2 class="text-lg font-semibold mb-2">Attachments</h2>
+        <div id="detailsAttachments" class="space-y-3"></div>
+      </div>
+
+      <div class="glass rounded-3xl p-4">
+        <h2 class="text-lg font-semibold mb-2">About the creator</h2>
+        <p id="detailsAboutCompany" class="text-sm leading-6 text-white/75"></p>
+      </div>
+
+      <div id="detailsStatus" class="hidden"></div>
+    </div>
+
+    <div class="fixed bottom-0 left-0 right-0 max-w-[430px] mx-auto border-t border-white/10 bg-black/90 backdrop-blur z-30 p-4">
+      <div class="flex gap-3">
+        <button type="button" data-details-save class="w-14 h-14 rounded-2xl bg-white/10 border border-white/10 flex items-center justify-center">
+          <span class="material-symbols-outlined">bookmark_add</span>
+        </button>
+        <button id="applyNowButton" type="button" class="flex-1 h-14 rounded-2xl bg-white text-black font-semibold">
+          Apply Now
+        </button>
+      </div>
+      <button id="markAppliedButton" type="button" class="mt-3 w-full h-12 rounded-2xl bg-white/10 text-white border border-white/10 font-semibold">
+        Mark Applied
+      </button>
+    </div>
+  </div>
+  <script type="module" src="scripts/app.js"></script>
+</body>
+</html>

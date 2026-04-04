@@ -1,0 +1,222 @@
+export const DEMO_OPPORTUNITIES = [
+  {
+    id: "demo-frontend-intern",
+    title: "Junior Frontend Developer",
+    caption:
+      "Hiring: Junior Frontend Developer in Istanbul. Flexible hours, React preferred, portfolio welcome.",
+    category: "Internship",
+    locationLabel: "Istanbul, Turkiye",
+    workMode: "Remote-friendly",
+    payLabel: "$1,200/mo",
+    deadlineAt: "2026-05-12T00:00:00.000Z",
+    tags: ["frontend", "react", "remote", "internship"],
+    eligibility: [
+      "Fresh graduates welcome",
+      "Portfolio required",
+      "Based in Turkiye or a nearby timezone",
+    ],
+    responsibilities: [
+      "Build and maintain responsive frontend components.",
+      "Collaborate with design and product teams on new features.",
+      "Support bug fixes, UI cleanup, and small product experiments.",
+    ],
+    requirements: ["HTML", "CSS", "JavaScript", "React", "Git", "Portfolio"],
+    perks: [
+      "Flexible working hours",
+      "Remote international team",
+      "Mentorship for junior developers",
+    ],
+    aboutCompany:
+      "RemoteFirst HQ connects distributed teams with modern digital talent and focuses on remote-ready, design-conscious products for startups and global clients.",
+    applyUrl: "https://remotefirsthq.com/jobs/frontend-intern",
+    attachments: [
+      {
+        name: "Role Brief PDF",
+        url: "https://example.com/remotefirsthq/frontend-intern-brief.pdf",
+        kind: "pdf",
+      },
+      {
+        name: "Team Introduction Deck",
+        url: "https://example.com/remotefirsthq/team-deck.pdf",
+        kind: "pdf",
+      },
+    ],
+    media: {
+      url: "https://images.unsplash.com/photo-1521737604893-d14cc237f11d?auto=format&fit=crop&w=1200&q=80",
+      alt: "Opportunity cover",
+    },
+    creatorName: "RemoteFirst HQ",
+    creatorHandle: "@remotefirsthq",
+    creatorPhotoURL:
+      "https://images.unsplash.com/photo-1542744173-8e7e53415bb0?auto=format&fit=crop&w=300&q=80",
+    creatorType: "company",
+    status: "published",
+    viewsCount: 12420,
+    savesCount: 1120,
+    appliedCount: 312,
+    commentsCount: 642,
+    likesCount: 18400,
+    createdAt: "2026-04-04T08:00:00.000Z",
+  },
+  {
+    id: "demo-women-stem-scholarship",
+    title: "Women in STEM Scholarship",
+    caption:
+      "An annual scholarship for women pursuing STEM degrees, with mentorship and a remote community track.",
+    category: "Scholarship",
+    locationLabel: "Global",
+    workMode: "Remote",
+    payLabel: "$3,000 grant",
+    deadlineAt: "2026-06-01T00:00:00.000Z",
+    tags: ["scholarship", "stem", "women", "education"],
+    eligibility: [
+      "Women-identifying STEM students",
+      "Currently enrolled in university",
+      "Personal statement required",
+    ],
+    responsibilities: [
+      "Submit your academic transcript and short essay.",
+      "Attend one online finalist interview if shortlisted.",
+    ],
+    requirements: ["Transcript", "Essay", "Recommendation", "Student status"],
+    perks: [
+      "$3,000 scholarship award",
+      "Mentorship from industry operators",
+      "Private community access",
+    ],
+    aboutCompany:
+      "FutureLabs funds accessible pathways into technical education through scholarships, events, and coaching.",
+    applyUrl: "https://futurelabs.org/scholarships/women-in-stem",
+    attachments: [
+      {
+        name: "Scholarship Guidelines",
+        url: "https://example.com/futurelabs/scholarship-guidelines.pdf",
+        kind: "pdf",
+      },
+    ],
+    media: {
+      url: "https://images.unsplash.com/photo-1509062522246-3755977927d7?auto=format&fit=crop&w=1200&q=80",
+      alt: "Scholarship cover",
+    },
+    creatorName: "FutureLabs",
+    creatorHandle: "@futurelabs",
+    creatorPhotoURL:
+      "https://images.unsplash.com/photo-1516321318423-f06f85e504b3?auto=format&fit=crop&w=300&q=80",
+    creatorType: "company",
+    status: "published",
+    viewsCount: 8740,
+    savesCount: 982,
+    appliedCount: 204,
+    commentsCount: 118,
+    likesCount: 6200,
+    createdAt: "2026-04-04T07:00:00.000Z",
+  },
+  {
+    id: "demo-ui-audit-gig",
+    title: "UI Audit Freelance Gig",
+    caption:
+      "A one-week freelance opportunity for designers who can audit onboarding flows and ship sharp recommendations.",
+    category: "Gig",
+    locationLabel: "Remote",
+    workMode: "Remote",
+    payLabel: "$450 fixed",
+    deadlineAt: "2026-04-18T00:00:00.000Z",
+    tags: ["design", "audit", "freelance", "ui"],
+    eligibility: [
+      "Open internationally",
+      "Strong UI portfolio",
+      "Fast written communication",
+    ],
+    responsibilities: [
+      "Review three onboarding journeys and identify conversion friction.",
+      "Deliver annotated screenshots and a prioritized action list.",
+      "Join one remote handoff call with the product team.",
+    ],
+    requirements: ["UI portfolio", "Audit experience", "Figma", "Loom"],
+    perks: [
+      "Fast turnaround project",
+      "Opportunity for repeat work",
+      "Async collaboration",
+    ],
+    aboutCompany:
+      "PixelSprint helps startups ship product design improvements without building an internal design team too early.",
+    applyUrl: "https://pixelsprint.co/gigs/ui-audit",
+    attachments: [
+      {
+        name: "Scope of Work",
+        url: "https://example.com/pixelsprint/ui-audit-scope.pdf",
+        kind: "pdf",
+      },
+    ],
+    media: {
+      url: "https://images.unsplash.com/photo-1454165804606-c3d57bc86b40?auto=format&fit=crop&w=1200&q=80",
+      alt: "Freelance gig cover",
+    },
+    creatorName: "PixelSprint",
+    creatorHandle: "@pixelsprint",
+    creatorPhotoURL:
+      "https://images.unsplash.com/photo-1497366754035-f200968a6e72?auto=format&fit=crop&w=300&q=80",
+    creatorType: "company",
+    status: "published",
+    viewsCount: 5260,
+    savesCount: 240,
+    appliedCount: 83,
+    commentsCount: 34,
+    likesCount: 2100,
+    createdAt: "2026-04-03T16:00:00.000Z",
+  },
+  {
+    id: "demo-junior-product-designer",
+    title: "Junior Product Designer",
+    caption:
+      "North Studio is hiring an early-career product designer to work on mobile flows, design systems, and growth experiments.",
+    category: "Job",
+    locationLabel: "Remote",
+    workMode: "Hybrid",
+    payLabel: "$1,800/mo",
+    deadlineAt: "2026-04-27T00:00:00.000Z",
+    tags: ["product design", "design system", "mobile", "junior"],
+    eligibility: [
+      "0-2 years of experience",
+      "Portfolio with shipped work",
+      "Comfortable with English collaboration",
+    ],
+    responsibilities: [
+      "Design product flows for web and mobile surfaces.",
+      "Maintain library components with the design systems team.",
+      "Work with PMs and engineers on growth experiments.",
+    ],
+    requirements: ["Figma", "Portfolio", "Product thinking", "Design systems"],
+    perks: [
+      "Remote-first culture",
+      "Quarterly learning budget",
+      "Mentorship from senior designers",
+    ],
+    aboutCompany:
+      "North Studio builds digital products for emerging brands and operates with a small cross-functional product team.",
+    applyUrl: "https://northstudio.design/careers/junior-product-designer",
+    attachments: [
+      {
+        name: "Design Exercise Overview",
+        url: "https://example.com/northstudio/design-exercise.pdf",
+        kind: "pdf",
+      },
+    ],
+    media: {
+      url: "https://images.unsplash.com/photo-1516321318423-f06f85e504b3?auto=format&fit=crop&w=1200&q=80",
+      alt: "Product design cover",
+    },
+    creatorName: "North Studio",
+    creatorHandle: "@northstudio",
+    creatorPhotoURL:
+      "https://images.unsplash.com/photo-1494790108377-be9c29b29330?auto=format&fit=crop&w=300&q=80",
+    creatorType: "company",
+    status: "published",
+    viewsCount: 6930,
+    savesCount: 412,
+    appliedCount: 149,
+    commentsCount: 57,
+    likesCount: 3900,
+    createdAt: "2026-04-03T09:30:00.000Z",
+  },
+];

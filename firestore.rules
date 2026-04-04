@@ -1,0 +1,108 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function currentUserExists() {
+      return signedIn() && exists(/databases/$(database)/documents/users/$(request.auth.uid));
+    }
+
+    function currentRole() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role;
+    }
+
+    function isAdmin() {
+      return currentUserExists() && currentRole() == 'admin';
+    }
+
+    function isCreator() {
+      return currentUserExists() && (currentRole() == 'creator' || currentRole() == 'admin');
+    }
+
+    function validRole(role) {
+      return role == 'seeker' || role == 'creator';
+    }
+
+    function validCreatorType(value) {
+      return value == null || value == 'individual' || value == 'company';
+    }
+
+    function validOpportunityCounters() {
+      return request.resource.data.savesCount >= 0
+        && request.resource.data.appliedCount >= 0
+        && request.resource.data.viewsCount >= 0
+        && request.resource.data.savesCount >= resource.data.savesCount - 1
+        && request.resource.data.savesCount <= resource.data.savesCount + 1
+        && request.resource.data.appliedCount >= resource.data.appliedCount - 1
+        && request.resource.data.appliedCount <= resource.data.appliedCount + 1
+        && request.resource.data.viewsCount >= resource.data.viewsCount
+        && request.resource.data.viewsCount <= resource.data.viewsCount + 1;
+    }
+
+    match /users/{uid} {
+      allow read: if signedIn() && (request.auth.uid == uid || isAdmin());
+
+      allow create: if signedIn()
+        && request.auth.uid == uid
+        && validRole(request.resource.data.role)
+        && validCreatorType(request.resource.data.creatorType);
+
+      allow update: if isAdmin()
+        || (
+          signedIn()
+          && request.auth.uid == uid
+          && request.resource.data.role == resource.data.role
+          && request.resource.data.creatorType == resource.data.creatorType
+        );
+
+      allow delete: if isAdmin();
+
+      match /states/{opportunityId} {
+        allow read, write: if signedIn() && request.auth.uid == uid;
+      }
+
+      match /notifications/{notificationId} {
+        allow read, create: if signedIn() && request.auth.uid == uid;
+        allow update: if signedIn() && request.auth.uid == uid;
+        allow delete: if isAdmin();
+      }
+    }
+
+    match /opportunities/{opportunityId} {
+      allow read: if true;
+
+      allow create: if signedIn()
+        && isCreator()
+        && request.resource.data.creatorUid == request.auth.uid
+        && request.resource.data.status == 'published';
+
+      allow update: if isAdmin()
+        || (
+          signedIn()
+          && resource.data.creatorUid == request.auth.uid
+          && request.resource.data.creatorUid == resource.data.creatorUid
+        )
+        || (
+          signedIn()
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+            'savesCount',
+            'appliedCount',
+            'viewsCount',
+            'updatedAt'
+          ])
+          && validOpportunityCounters()
+        );
+
+      allow delete: if isAdmin()
+        || (signedIn() && resource.data.creatorUid == request.auth.uid);
+
+      match /comments/{commentId} {
+        allow read: if true;
+        allow create: if signedIn();
+        allow update, delete: if isAdmin();
+      }
+    }
+  }
+}
