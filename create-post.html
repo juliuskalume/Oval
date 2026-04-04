@@ -13,6 +13,7 @@
     .hide-scrollbar::-webkit-scrollbar { display: none; }
     .hide-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
   </style>
+  <link rel="stylesheet" href="styles/theme.css" />
 </head>
 <body data-page="create-post" class="bg-black min-h-screen text-white">
   <div class="phone bg-black flex flex-col">
@@ -148,7 +149,7 @@
 
         <div id="createPostStatus" class="hidden"></div>
 
-        <button id="publishOpportunityButton" type="submit" class="w-full bg-red-500 hover:bg-red-600 transition rounded-2xl py-4 font-semibold">
+        <button id="publishOpportunityButton" type="submit" class="theme-primary w-full transition rounded-2xl py-4 font-semibold">
           Publish opportunity
         </button>
       </form>
