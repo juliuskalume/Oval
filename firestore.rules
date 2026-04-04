@@ -29,6 +29,10 @@ service cloud.firestore {
       return value == null || value == 'individual' || value == 'company';
     }
 
+    function validOpportunityStatus(value) {
+      return value == 'pending' || value == 'published' || value == 'archived';
+    }
+
     function validOpportunityCounters() {
       return request.resource.data.savesCount >= 0
         && request.resource.data.appliedCount >= 0
@@ -64,27 +68,36 @@ service cloud.firestore {
       }
 
       match /notifications/{notificationId} {
-        allow read, create: if signedIn() && request.auth.uid == uid;
-        allow update: if signedIn() && request.auth.uid == uid;
+        allow read: if signedIn() && (request.auth.uid == uid || isAdmin());
+        allow create: if signedIn() && (request.auth.uid == uid || isAdmin());
+        allow update: if signedIn() && (request.auth.uid == uid || isAdmin());
         allow delete: if isAdmin();
       }
     }
 
     match /opportunities/{opportunityId} {
-      allow read: if true;
+      allow read: if resource.data.status == 'published'
+        || isAdmin()
+        || (signedIn() && resource.data.creatorUid == request.auth.uid);
 
       allow create: if signedIn()
         && request.resource.data.creatorUid == request.auth.uid
-        && request.resource.data.status == 'published';
+        && validOpportunityStatus(request.resource.data.status)
+        && (
+          request.resource.data.status == 'pending'
+          || (isAdmin() && request.resource.data.status == 'published')
+        );
 
       allow update: if isAdmin()
         || (
           signedIn()
           && resource.data.creatorUid == request.auth.uid
           && request.resource.data.creatorUid == resource.data.creatorUid
+          && request.resource.data.status == resource.data.status
         )
         || (
           signedIn()
+          && resource.data.status == 'published'
           && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
             'savesCount',
             'appliedCount',
@@ -98,8 +111,14 @@ service cloud.firestore {
         || (signedIn() && resource.data.creatorUid == request.auth.uid);
 
       match /comments/{commentId} {
-        allow read: if true;
-        allow create: if signedIn();
+        allow read: if get(/databases/$(database)/documents/opportunities/$(opportunityId)).data.status == 'published'
+          || isAdmin()
+          || (
+            signedIn()
+            && get(/databases/$(database)/documents/opportunities/$(opportunityId)).data.creatorUid == request.auth.uid
+          );
+        allow create: if signedIn()
+          && get(/databases/$(database)/documents/opportunities/$(opportunityId)).data.status == 'published';
         allow update, delete: if isAdmin();
       }
     }

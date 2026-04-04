@@ -23,6 +23,7 @@ import {
   updateProfile,
   uploadBytes,
   getDownloadURL,
+  where,
 } from "./firebase.js";
 import { DEMO_OPPORTUNITIES } from "./sample-data.js";
 
@@ -273,6 +274,14 @@ function normalizeOpportunity(docSnapshot) {
   };
 }
 
+function sortByCreatedAtDesc(items) {
+  return [...items].sort((left, right) => {
+    const leftValue = toDate(left.createdAt)?.getTime() || 0;
+    const rightValue = toDate(right.createdAt)?.getTime() || 0;
+    return rightValue - leftValue;
+  });
+}
+
 function defaultBio(role, creatorType) {
   if (role === "creator" && creatorType === "company") {
     return "Sharing jobs, gigs, and scholarships with the Oval community.";
@@ -302,6 +311,25 @@ async function ensureDemoData() {
     ...item,
     seeded: true,
   }));
+}
+
+function statusMeta(status) {
+  if (status === "pending") {
+    return {
+      label: "Pending review",
+      classes: "bg-amber-500/15 text-amber-200 border border-amber-500/30",
+    };
+  }
+  if (status === "archived") {
+    return {
+      label: "Archived",
+      classes: "bg-red-500/15 text-red-200 border border-red-500/30",
+    };
+  }
+  return {
+    label: "Live",
+    classes: "bg-emerald-500/15 text-emerald-200 border border-emerald-500/30",
+  };
 }
 
 async function ensureUserProfile(user, options = {}) {
@@ -358,34 +386,65 @@ async function ensureUserProfile(user, options = {}) {
   return profile;
 }
 
-async function loadPublishedOpportunities() {
+async function loadPublicOpportunities() {
+  try {
+    const snapshot = await withTimeout(
+      getDocs(query(collection(db, "opportunities"), where("status", "==", "published"))),
+    );
+    return sortByCreatedAtDesc(snapshot.docs.map(normalizeOpportunity));
+  } catch (error) {
+    console.warn("Falling back to bundled opportunities.", error);
+    return (await ensureDemoData()).filter((item) => item.status === "published");
+  }
+}
+
+async function loadUserOpportunities(uid) {
+  if (!uid) {
+    return [];
+  }
+  try {
+    const snapshot = await withTimeout(
+      getDocs(query(collection(db, "opportunities"), where("creatorUid", "==", uid))),
+    );
+    return sortByCreatedAtDesc(snapshot.docs
+      .map(normalizeOpportunity)
+      .filter((item) => item.status !== "archived"));
+  } catch (error) {
+    console.warn("User opportunity load timed out.", error);
+    return [];
+  }
+}
+
+async function loadAllOpportunities() {
   try {
     const snapshot = await withTimeout(
       getDocs(query(collection(db, "opportunities"), orderBy("createdAt", "desc"))),
     );
-    const items = snapshot.docs
-      .map(normalizeOpportunity)
-      .filter((item) => item.status !== "archived");
-    if (items.length) {
-      return items;
-    }
+    return snapshot.docs.map(normalizeOpportunity);
   } catch (error) {
-    console.warn("Falling back to bundled opportunities.", error);
+    console.warn("Admin opportunity load timed out.", error);
+    return [];
   }
-  return ensureDemoData();
 }
 
-async function loadOpportunity(opportunityId) {
+async function loadOpportunity(opportunityId, options = {}) {
   const requestedId = opportunityId || DEMO_OPPORTUNITIES[0].id;
+  const fallbackDemo = (await ensureDemoData()).find((item) => item.id === requestedId);
   try {
     const snapshot = await withTimeout(getDoc(doc(db, "opportunities", requestedId)));
     if (snapshot.exists()) {
       return normalizeOpportunity(snapshot);
     }
   } catch (error) {
-    console.warn("Falling back to bundled opportunity.", error);
+    console.warn("Opportunity load failed.", error);
   }
-  return (await ensureDemoData()).find((item) => item.id === requestedId) || (await ensureDemoData())[0] || null;
+  if (fallbackDemo) {
+    return fallbackDemo;
+  }
+  if (options.fallbackToFirstDemo !== false) {
+    return (await ensureDemoData())[0] || null;
+  }
+  return null;
 }
 
 async function loadUserStates(uid) {
@@ -799,6 +858,7 @@ async function recordView(opportunityId) {
 }
 
 function renderOpportunityListCard(opportunity, state = {}, options = {}) {
+  const opportunityStatus = statusMeta(opportunity.status);
   const actions = options.showActions
     ? `
       <div class="mt-4 flex flex-wrap gap-2">
@@ -821,7 +881,10 @@ function renderOpportunityListCard(opportunity, state = {}, options = {}) {
               <h3 class="font-semibold">${escapeHtml(opportunity.title)}</h3>
               <p class="text-sm text-white/60">${escapeHtml(opportunity.creatorName || "Oval Creator")}</p>
             </div>
-            <span class="text-[10px] px-2 py-1 rounded-full bg-white text-black">${escapeHtml(opportunity.category)}</span>
+            <div class="flex flex-col items-end gap-2">
+              <span class="text-[10px] px-2 py-1 rounded-full bg-white text-black">${escapeHtml(opportunity.category)}</span>
+              ${options.showStatus ? `<span class="text-[10px] px-2 py-1 rounded-full ${opportunityStatus.classes}">${escapeHtml(opportunityStatus.label)}</span>` : ""}
+            </div>
           </div>
           <div class="flex flex-wrap gap-2 mt-3 text-[11px]">
             <span class="chip px-2.5 py-1 rounded-full">${escapeHtml(opportunity.locationLabel || "Remote")}</span>
@@ -925,12 +988,24 @@ async function bindOpportunityActionButtons(container, opportunities, states, us
 }
 
 async function initFeed(user) {
-  const opportunities = await loadPublishedOpportunities();
+  const opportunities = await loadPublicOpportunities();
   const states = await refreshStates(user);
   const slides = qs("#feedSlides");
   const status = qs("#feedStatus");
 
   if (!slides) {
+    return;
+  }
+
+  if (!opportunities.length) {
+    slides.innerHTML = `
+      <section class="min-h-screen flex items-center justify-center px-6">
+        <div class="rounded-3xl bg-white/5 border border-white/10 p-6 text-center max-w-sm">
+          <h2 class="text-lg font-semibold">No live posts yet</h2>
+          <p class="text-sm text-white/60 mt-3">New submissions will appear here after admin approval.</p>
+        </div>
+      </section>
+    `;
     return;
   }
 
@@ -1035,18 +1110,31 @@ async function initFeed(user) {
   });
 }
 
-async function initDetails(user) {
+async function initDetails(user, profile) {
   const status = qs("#detailsStatus");
   const opportunityId = new URLSearchParams(location.search).get("id") || DEMO_OPPORTUNITIES[0].id;
-  const opportunity = await loadOpportunity(opportunityId);
+  const opportunity = await loadOpportunity(opportunityId, { fallbackToFirstDemo: opportunityId.startsWith("demo-") });
   if (!opportunity) {
-    setStatus(status, "Opportunity not found.", "error");
+    const shell = qs(".phone");
+    if (shell) {
+      shell.innerHTML = `
+        <div class="min-h-screen flex flex-col items-center justify-center px-6 text-center">
+          <div class="rounded-3xl bg-white/5 border border-white/10 p-6 max-w-sm">
+            <h1 class="text-xl font-semibold">Opportunity unavailable</h1>
+            <p class="text-sm text-white/60 mt-3">This post is still pending review or is no longer available publicly.</p>
+            <a href="feed.html" class="inline-flex mt-5 px-4 py-3 rounded-2xl bg-white text-black font-semibold">Back to feed</a>
+          </div>
+        </div>
+      `;
+    }
     return;
   }
   const states = await refreshStates(user);
   const state = states.get(opportunity.id) || {};
 
-  recordView(opportunity.id);
+  if (opportunity.status === "published" || !opportunity.status) {
+    recordView(opportunity.id);
+  }
 
   setText("#detailsTitle", opportunity.title);
   setText("#detailsCreatorName", opportunity.creatorHandle || opportunity.creatorName);
@@ -1200,7 +1288,7 @@ async function initDetails(user) {
 }
 
 async function initSearch(user) {
-  const opportunities = await loadPublishedOpportunities();
+  const opportunities = await loadPublicOpportunities();
   const states = await refreshStates(user);
   const list = qs("#searchResults");
   const searchInput = qs("#searchInput");
@@ -1269,7 +1357,7 @@ async function initSaved(user, profile) {
     return;
   }
   const states = await loadUserStates(user.uid);
-  const opportunities = await loadPublishedOpportunities();
+  const opportunities = await loadPublicOpportunities();
   const opportunityMap = new Map(opportunities.map((item) => [item.id, item]));
   const savedItems = Array.from(states.entries())
     .filter(([, item]) => item.saved)
@@ -1320,10 +1408,10 @@ async function initProfile(user, profile) {
     avatar.alt = profile.displayName;
   }
 
-  const opportunities = await loadPublishedOpportunities();
+  const opportunities = await loadPublicOpportunities();
   const states = await loadUserStates(user.uid);
-  const myPosts = opportunities.filter((item) => item.creatorUid === user.uid);
-  const opportunityMap = new Map(opportunities.map((item) => [item.id, item]));
+  const myPosts = await loadUserOpportunities(user.uid);
+  const opportunityMap = new Map([...opportunities, ...myPosts].map((item) => [item.id, item]));
 
   const creatorButton = qs("#creatorDashboardLink");
   if (creatorButton) {
@@ -1355,12 +1443,14 @@ async function initProfile(user, profile) {
   function renderPosts() {
     if (!myPosts.length) {
       content.innerHTML =
-        '<div class="rounded-3xl bg-white/5 border border-white/10 p-6 text-sm text-white/60">You have not published any opportunities yet.</div>';
+        '<div class="rounded-3xl bg-white/5 border border-white/10 p-6 text-sm text-white/60">You have not posted any opportunities yet.</div>';
       return;
     }
     content.innerHTML = myPosts
       .map(
-        (item) => `
+        (item) => {
+          const itemStatus = statusMeta(item.status);
+          return `
           <div class="rounded-3xl bg-white/5 border border-white/10 p-4">
             <div class="flex items-start gap-3">
               <img src="${escapeHtml(opportunityMedia(item))}" class="w-16 h-16 rounded-2xl object-cover" alt="${escapeHtml(item.title)}">
@@ -1370,7 +1460,10 @@ async function initProfile(user, profile) {
                     <h3 class="font-semibold">${escapeHtml(item.title)}</h3>
                     <p class="text-sm text-white/60">${escapeHtml(item.category)} | ${escapeHtml(item.locationLabel)}</p>
                   </div>
-                  <span class="text-[10px] px-2 py-1 rounded-full bg-white text-black">${escapeHtml(item.payLabel)}</span>
+                  <div class="flex flex-col items-end gap-2">
+                    <span class="text-[10px] px-2 py-1 rounded-full bg-white text-black">${escapeHtml(item.payLabel)}</span>
+                    <span class="text-[10px] px-2 py-1 rounded-full ${itemStatus.classes}">${escapeHtml(itemStatus.label)}</span>
+                  </div>
                 </div>
                 <div class="flex flex-wrap gap-2 mt-3 text-[11px]">
                   <span class="chip px-2.5 py-1 rounded-full">${escapeHtml(formatCompact(item.viewsCount || 0))} views</span>
@@ -1384,7 +1477,8 @@ async function initProfile(user, profile) {
               </div>
             </div>
           </div>
-        `,
+        `;
+        },
       )
       .join("");
   }
@@ -1475,8 +1569,12 @@ async function initCreatePost(user, profile) {
   const editId = new URLSearchParams(location.search).get("id");
   let editingOpportunity = null;
 
+  if (submit) {
+    submit.textContent = profile.role === "admin" ? "Publish opportunity" : "Submit for review";
+  }
+
   if (editId) {
-    editingOpportunity = await loadOpportunity(editId);
+    editingOpportunity = await loadOpportunity(editId, { fallbackToFirstDemo: editId.startsWith("demo-") });
     if (!editingOpportunity) {
       setStatus(status, "Opportunity not found.", "error");
       return;
@@ -1493,7 +1591,10 @@ async function initCreatePost(user, profile) {
       return;
     }
     setText("#createPostHeading", "Edit post");
-    setText("#createPostSubheading", "Update the opportunity details and publish the changes.");
+    setText("#createPostSubheading", "Update the opportunity details and save the changes.");
+    if (submit) {
+      submit.textContent = "Save changes";
+    }
     qs("#title").value = editingOpportunity.title || "";
     qs("#caption").value = editingOpportunity.caption || "";
     qs("#applyUrl").value = editingOpportunity.applyUrl || "";
@@ -1575,6 +1676,7 @@ async function initCreatePost(user, profile) {
       const uploadedAttachments = await Promise.all(
         attachmentFiles.map((file) => uploadFile(file, "opportunity-attachments", user.uid)),
       );
+      const nextStatus = editingOpportunity?.status || (profile.role === "admin" ? "published" : "pending");
 
       const payload = {
         title,
@@ -1603,7 +1705,7 @@ async function initCreatePost(user, profile) {
         creatorHandle: `@${profile.username}`,
         creatorPhotoURL: profile.photoURL || DEFAULT_AVATAR,
         creatorType: profile.creatorType || "individual",
-        status: "published",
+        status: nextStatus,
         updatedAt: Timestamp.now(),
       };
 
@@ -1613,7 +1715,13 @@ async function initCreatePost(user, profile) {
 
       if (editingOpportunity) {
         await updateDoc(doc(db, "opportunities", editingOpportunity.id), payload);
-        setStatus(status, "Opportunity updated.", "success");
+        setStatus(
+          status,
+          nextStatus === "pending"
+            ? "Opportunity updated and remains in review."
+            : "Opportunity updated.",
+          "success",
+        );
       } else {
         await addDoc(collection(db, "opportunities"), {
           ...payload,
@@ -1627,7 +1735,13 @@ async function initCreatePost(user, profile) {
         form.reset();
         existingAttachmentsState.length = 0;
         renderExistingAttachments();
-        setStatus(status, "Opportunity published.", "success");
+        setStatus(
+          status,
+          nextStatus === "pending"
+            ? "Opportunity submitted for review. It will appear publicly after admin approval."
+            : "Opportunity published.",
+          "success",
+        );
       }
     } catch (error) {
       console.error(error);
@@ -1645,8 +1759,7 @@ async function initCreatorDashboard(user, profile) {
     return;
   }
 
-  const opportunities = await loadPublishedOpportunities();
-  const myPosts = opportunities.filter((item) => item.creatorUid === user.uid);
+  const myPosts = await loadUserOpportunities(user.uid);
   const totalViews = myPosts.reduce((sum, item) => sum + Number(item.viewsCount || 0), 0);
   const totalApplications = myPosts.reduce((sum, item) => sum + Number(item.appliedCount || 0), 0);
   const totalSaves = myPosts.reduce((sum, item) => sum + Number(item.savesCount || 0), 0);
@@ -1658,20 +1771,26 @@ async function initCreatorDashboard(user, profile) {
   const postsList = qs("#dashboardPosts");
   if (!myPosts.length) {
     postsList.innerHTML =
-      '<div class="rounded-3xl bg-white/5 border border-white/10 p-6 text-sm text-white/60">You have not published any opportunities yet.</div>';
+      '<div class="rounded-3xl bg-white/5 border border-white/10 p-6 text-sm text-white/60">You have not posted any opportunities yet.</div>';
   } else {
     postsList.innerHTML = myPosts
       .map(
-        (item) => `
+        (item) => {
+          const itemStatus = statusMeta(item.status);
+          return `
           <div class="flex items-center gap-3">
             <img src="${escapeHtml(opportunityMedia(item))}" class="w-14 h-14 rounded-2xl object-cover" alt="${escapeHtml(item.title)}">
             <div class="flex-1">
               <p class="font-medium text-sm">${escapeHtml(item.title)}</p>
-              <p class="text-white/50 text-xs">${escapeHtml(formatCompact(item.viewsCount || 0))} views | ${escapeHtml(formatCompact(item.savesCount || 0))} saves | ${escapeHtml(formatCompact(item.appliedCount || 0))} applied</p>
+              <div class="mt-1 flex flex-wrap items-center gap-2">
+                <p class="text-white/50 text-xs">${escapeHtml(formatCompact(item.viewsCount || 0))} views | ${escapeHtml(formatCompact(item.savesCount || 0))} saves | ${escapeHtml(formatCompact(item.appliedCount || 0))} applied</p>
+                <span class="text-[10px] px-2 py-1 rounded-full ${itemStatus.classes}">${escapeHtml(itemStatus.label)}</span>
+              </div>
             </div>
             <a href="create-post.html?id=${encodeURIComponent(item.id)}" class="text-white/70"><span class="material-symbols-outlined">edit</span></a>
           </div>
-        `,
+        `;
+        },
       )
       .join("");
   }
@@ -1686,6 +1805,117 @@ async function initCreatorDashboard(user, profile) {
   setText("#funnelViewsValue", formatCompact(totalViews));
   setText("#funnelSavesValue", formatCompact(totalSaves));
   setText("#funnelAppliedValue", formatCompact(totalApplications));
+}
+
+async function initAdminModeration(user, profile) {
+  if (!user || !profile) {
+    setPendingReturnTo("admin-moderation.html");
+    location.href = "sign-in-email.html?returnTo=admin-moderation.html";
+    return;
+  }
+  if (profile.role !== "admin") {
+    location.href = "feed.html";
+    return;
+  }
+
+  const list = qs("#moderationQueue");
+  const status = qs("#moderationStatus");
+  let opportunities = [];
+
+  async function refresh() {
+    opportunities = await loadAllOpportunities();
+    const pendingItems = opportunities.filter((item) => item.status === "pending");
+    const publishedItems = opportunities.filter((item) => item.status === "published");
+    const archivedItems = opportunities.filter((item) => item.status === "archived");
+
+    setText("#moderationPendingCount", String(pendingItems.length));
+    setText("#moderationPublishedCount", String(publishedItems.length));
+    setText("#moderationArchivedCount", String(archivedItems.length));
+
+    if (!list) {
+      return;
+    }
+
+    if (!pendingItems.length) {
+      list.innerHTML =
+        '<div class="rounded-3xl bg-white/5 border border-white/10 p-6 text-sm text-white/60">No posts are waiting for approval.</div>';
+      return;
+    }
+
+    list.innerHTML = pendingItems
+      .map((item) => `
+        <div class="rounded-3xl bg-white/5 border border-white/10 p-4">
+          <div class="flex flex-col md:flex-row gap-4">
+            <img src="${escapeHtml(opportunityMedia(item))}" class="w-full md:w-56 h-40 rounded-2xl object-cover" alt="${escapeHtml(item.title)}">
+            <div class="flex-1">
+              <div class="flex items-start justify-between gap-4">
+                <div>
+                  <h3 class="font-semibold">${escapeHtml(item.title)}</h3>
+                  <p class="text-sm text-white/60 mt-1">${escapeHtml(item.creatorName || "Oval User")} • ${escapeHtml(item.category)} • ${escapeHtml(item.locationLabel || "Remote")}</p>
+                  <p class="text-sm text-white/70 mt-3 max-h-[4.5rem] overflow-hidden">${escapeHtml(item.caption || "")}</p>
+                </div>
+                <span class="px-3 py-1 rounded-full bg-amber-500/20 text-amber-200 text-xs border border-amber-500/30">Pending</span>
+              </div>
+              <div class="mt-4 flex flex-wrap gap-2 text-xs">
+                <span class="chip px-2.5 py-1 rounded-full">${escapeHtml(item.payLabel || "Compensation listed")}</span>
+                <span class="chip px-2.5 py-1 rounded-full">${escapeHtml(item.workMode || "Flexible")}</span>
+                <span class="chip px-2.5 py-1 rounded-full">Submitted ${escapeHtml(formatRelativeDate(item.createdAt) || "recently")}</span>
+              </div>
+              <div class="mt-5 flex flex-wrap gap-2">
+                <a href="${detailsUrl(item.id)}" class="px-4 py-2 rounded-xl bg-white/10 border border-white/10 text-white font-semibold">Preview</a>
+                <button type="button" data-moderation-action="approve" data-id="${escapeHtml(item.id)}" class="px-4 py-2 rounded-xl bg-white text-black font-semibold">Approve</button>
+                <button type="button" data-moderation-action="archive" data-id="${escapeHtml(item.id)}" class="px-4 py-2 rounded-xl bg-red-500 text-white font-semibold">Archive</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      `)
+      .join("");
+  }
+
+  list?.addEventListener("click", async (event) => {
+    const button = event.target.closest("[data-moderation-action]");
+    if (!button) {
+      return;
+    }
+    const item = opportunities.find((entry) => entry.id === button.dataset.id);
+    if (!item) {
+      return;
+    }
+
+    button.disabled = true;
+    const nextStatus = button.dataset.moderationAction === "approve" ? "published" : "archived";
+
+    try {
+      await updateDoc(doc(db, "opportunities", item.id), {
+        status: nextStatus,
+        updatedAt: Timestamp.now(),
+      });
+      await createNotification(item.creatorUid, {
+        type: nextStatus === "published" ? "moderation-approved" : "moderation-archived",
+        title: nextStatus === "published" ? "Opportunity approved" : "Opportunity not approved",
+        body:
+          nextStatus === "published"
+            ? `${item.title} is now live on Oval.`
+            : `${item.title} was archived during moderation.`,
+        opportunityId: item.id,
+      });
+      setStatus(
+        status,
+        nextStatus === "published"
+          ? "Opportunity approved and published."
+          : "Opportunity archived.",
+        "success",
+      );
+      await refresh();
+    } catch (error) {
+      console.error(error);
+      setStatus(status, error.message || "Moderation action failed.", "error");
+      button.disabled = false;
+    }
+  });
+
+  await refresh();
 }
 
 async function initNotifications(user, profile) {
@@ -1771,6 +2001,10 @@ async function main() {
   }
   if (page === "creator-dashboard") {
     await initCreatorDashboard(user, profile);
+    return;
+  }
+  if (page === "admin-moderation") {
+    await initAdminModeration(user, profile);
     return;
   }
   if (page === "notifications") {
