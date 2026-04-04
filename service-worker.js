@@ -1,4 +1,4 @@
-const CACHE_VERSION = "v4";
+const CACHE_VERSION = "v5";
 const STATIC_CACHE = `oval-static-${CACHE_VERSION}`;
 const RUNTIME_CACHE = `oval-runtime-${CACHE_VERSION}`;
 const OFFLINE_URL = "./offline.html";
@@ -9,7 +9,6 @@ const APP_SHELL_FILES = [
   "./offline.html",
   "./onboarding.html",
   "./sign-in-email.html",
-  "./sign-in-google.html",
   "./feed.html",
   "./details.html",
   "./search.html",

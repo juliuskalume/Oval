@@ -817,9 +817,10 @@ async function initOnboarding(user, profile) {
   applySkipLinks(document);
   qsa("[data-auth-link]").forEach((link) => {
     link.addEventListener("click", () => {
-      setPendingReturnTo("feed.html");
+      setPendingReturnTo(getPendingReturnTo("feed.html"));
     });
   });
+  bindGoogleAuth();
 }
 
 async function initEmailAuth(user, profile) {
@@ -829,6 +830,13 @@ async function initEmailAuth(user, profile) {
   }
 
   applySkipLinks(document);
+  qsa("[data-google-onboarding-link]").forEach((link) => {
+    const target = getPendingReturnTo("feed.html");
+    link.href = `onboarding.html?returnTo=${encodeURIComponent(target)}`;
+    link.addEventListener("click", () => {
+      setPendingReturnTo(target);
+    });
+  });
   const form = qs("#emailAuthForm");
   const modeButtons = qsa("[data-auth-mode]");
   const createOnly = qsa("[data-create-only]");
@@ -901,14 +909,13 @@ async function initEmailAuth(user, profile) {
   paint();
 }
 
-async function initGoogleAuth(user, profile) {
-  if (user && profile) {
-    redirectAfterAuth(profile);
-    return;
-  }
-  applySkipLinks(document);
+function bindGoogleAuth() {
   const button = qs("#googleContinue");
   const status = qs("#googleStatus");
+  if (!button || button.dataset.authBound === "1") {
+    return;
+  }
+  button.dataset.authBound = "1";
 
   button.addEventListener("click", async () => {
     button.disabled = true;
@@ -2502,10 +2509,6 @@ async function main() {
   }
   if (page === "sign-in-email") {
     await initEmailAuth(user, profile);
-    return;
-  }
-  if (page === "sign-in-google") {
-    await initGoogleAuth(user, profile);
     return;
   }
   if (page === "feed") {

@@ -4,6 +4,11 @@
       "source": "/",
       "destination": "/onboarding.html",
       "permanent": false
+    },
+    {
+      "source": "/sign-in-google.html",
+      "destination": "/onboarding.html",
+      "permanent": false
     }
   ]
 }
