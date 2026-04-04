@@ -36,6 +36,7 @@ const MAX_CAPTION_LENGTH = 150;
 const FEED_CAPTION_LENGTH = 100;
 const FEED_BATCH_SIZE = 4;
 const FEED_VIDEO_SOUND_KEY = "oval.feedVideoSoundEnabled";
+const APP_LOADER_MIN_MS = 420;
 const DEFAULT_COVER =
   "https://images.unsplash.com/photo-1521737604893-d14cc237f11d?auto=format&fit=crop&w=1200&q=80";
 const DEFAULT_AVATAR =
@@ -59,6 +60,92 @@ function qs(selector, root = document) {
 
 function qsa(selector, root = document) {
   return Array.from(root.querySelectorAll(selector));
+}
+
+let appLoaderShownAt = 0;
+
+function ensureAppLoader() {
+  let loader = document.getElementById("appLoader");
+  if (!loader) {
+    loader = document.createElement("div");
+    loader.id = "appLoader";
+    loader.className = "app-loader";
+    loader.setAttribute("aria-live", "polite");
+    loader.setAttribute("aria-label", "Loading Oval");
+    loader.innerHTML = `
+      <div class="app-loader__shell" role="status">
+        <div class="app-loader__halo"></div>
+        <div class="app-loader__ring"></div>
+        <div class="app-loader__ring app-loader__ring--inner"></div>
+        <div class="app-loader__core">
+          <span class="app-loader__wordmark">OVAL</span>
+        </div>
+        <div class="app-loader__caption">Loading your next move</div>
+      </div>
+    `;
+    document.body.appendChild(loader);
+  }
+  return loader;
+}
+
+function showAppLoader() {
+  const loader = ensureAppLoader();
+  appLoaderShownAt = performance.now();
+  document.body.classList.add("app-loading");
+  loader.classList.remove("app-loader--hidden");
+  return loader;
+}
+
+async function hideAppLoader() {
+  const loader = ensureAppLoader();
+  const elapsed = performance.now() - appLoaderShownAt;
+  const remaining = Math.max(0, APP_LOADER_MIN_MS - elapsed);
+  if (remaining) {
+    await new Promise((resolve) => window.setTimeout(resolve, remaining));
+  }
+  loader.classList.add("app-loader--hidden");
+  document.body.classList.remove("app-loading");
+}
+
+function shouldShowLoaderForLink(link, event) {
+  if (!link || event.defaultPrevented || event.button !== 0) {
+    return false;
+  }
+  if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) {
+    return false;
+  }
+  if (link.target && link.target !== "_self") {
+    return false;
+  }
+  if (link.hasAttribute("download")) {
+    return false;
+  }
+  const rawHref = link.getAttribute("href");
+  if (!rawHref || rawHref.startsWith("#") || /^javascript:/i.test(rawHref)) {
+    return false;
+  }
+  const url = new URL(link.href, location.href);
+  if (url.origin !== location.origin) {
+    return false;
+  }
+  if (url.pathname === location.pathname && url.search === location.search && url.hash) {
+    return false;
+  }
+  return true;
+}
+
+function wireLoadingTransitions() {
+  document.addEventListener("click", (event) => {
+    const link = event.target.closest("a[href]");
+    if (!shouldShowLoaderForLink(link, event)) {
+      return;
+    }
+    showAppLoader();
+  }, true);
+
+  window.addEventListener("beforeunload", () => {
+    showAppLoader();
+  });
 }
 
 function escapeHtml(value) {
@@ -2368,15 +2455,24 @@ async function main() {
   }
 }
 
-main().catch((error) => {
-  console.error(error);
-  renderFatalError(error);
-});
+showAppLoader();
+wireLoadingTransitions();
+
+main()
+  .catch((error) => {
+    console.error(error);
+    renderFatalError(error);
+  })
+  .finally(() => {
+    hideAppLoader().catch(() => {});
+  });
 
 window.addEventListener("error", (event) => {
+  hideAppLoader().catch(() => {});
   renderFatalError(event.error || event.message);
 });
 
 window.addEventListener("unhandledrejection", (event) => {
+  hideAppLoader().catch(() => {});
   renderFatalError(event.reason);
 });
