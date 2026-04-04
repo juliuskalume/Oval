@@ -35,6 +35,7 @@ const BOOTSTRAP_ADMIN_EMAILS = new Set([
 const MAX_CAPTION_LENGTH = 150;
 const FEED_CAPTION_LENGTH = 100;
 const FEED_BATCH_SIZE = 4;
+const FEED_VIDEO_MUTED_KEY = "oval.feedVideoMuted";
 const DEFAULT_COVER =
   "https://images.unsplash.com/photo-1521737604893-d14cc237f11d?auto=format&fit=crop&w=1200&q=80";
 const DEFAULT_AVATAR =
@@ -112,6 +113,20 @@ function getPendingReturnTo(defaultPath) {
 
 function clearPendingReturnTo() {
   sessionStorage.removeItem(RETURN_TO_KEY);
+}
+
+function getFeedVideoMutedPreference() {
+  try {
+    return localStorage.getItem(FEED_VIDEO_MUTED_KEY) === "1";
+  } catch (error) {
+    return false;
+  }
+}
+
+function setFeedVideoMutedPreference(muted) {
+  try {
+    localStorage.setItem(FEED_VIDEO_MUTED_KEY, muted ? "1" : "0");
+  } catch (error) {}
 }
 
 function toDate(value) {
@@ -993,16 +1008,16 @@ function muteOtherFeedVideos(container, activeVideo) {
       return;
     }
     video.muted = true;
-    syncFeedVideoAudioButton(video.closest("[data-opportunity-id]"), true);
   });
 }
 
 function renderFeedSlide(opportunity, state = {}) {
   const showAudioToggle = isVideoKind(opportunityMediaKind(opportunity));
+  const muted = getFeedVideoMutedPreference();
   return `
     <section class="relative min-h-screen snap-start" data-opportunity-id="${escapeHtml(opportunity.id)}">
       <div class="absolute inset-0 pointer-events-none">
-        ${renderOpportunityMedia(opportunity, "w-full h-full object-cover", { muted: true, loop: true, autoplay: true })}
+        ${renderOpportunityMedia(opportunity, "w-full h-full object-cover", { muted, loop: true, autoplay: true })}
         <div class="absolute inset-0 bg-gradient-to-t from-black/85 via-black/10 to-black/45"></div>
       </div>
       <div class="relative min-h-screen px-4">
@@ -1028,8 +1043,8 @@ function renderFeedSlide(opportunity, state = {}) {
           </button>
           ${showAudioToggle ? `
             <button type="button" class="flex flex-col items-center" data-action="toggle-video-audio" data-id="${escapeHtml(opportunity.id)}" data-video-audio-button>
-              <span class="material-symbols-outlined text-[30px]" data-audio-icon>volume_up</span>
-              <span class="text-xs mt-1" data-audio-label>Sound</span>
+              <span class="material-symbols-outlined text-[30px]" data-audio-icon>${muted ? "volume_up" : "volume_off"}</span>
+              <span class="text-xs mt-1" data-audio-label>${muted ? "Sound" : "Mute"}</span>
             </button>
           ` : ""}
         </div>
@@ -1173,15 +1188,26 @@ async function bindOpportunityActionButtons(container, opportunities, states, us
         if (!video) {
           return;
         }
-        const nextMuted = !video.muted;
+        const nextMuted = !getFeedVideoMutedPreference();
+        setFeedVideoMutedPreference(nextMuted);
         if (!nextMuted) {
           muteOtherFeedVideos(container, video);
         }
-        video.muted = nextMuted;
-        if (!nextMuted) {
-          video.play().catch(() => {});
+        qsa("[data-video-audio-button]", container).forEach((audioButton) => {
+          paintVideoAudioButton(audioButton, nextMuted);
+        });
+        if (nextMuted) {
+          qsa("video", container).forEach((feedVideo) => {
+            feedVideo.muted = true;
+          });
+          return;
         }
-        paintVideoAudioButton(button, nextMuted);
+        video.muted = false;
+        video.play().catch(() => {
+          video.muted = true;
+          paintVideoAudioButton(button, true);
+          setStatus(statusTarget, "Your browser blocked autoplay with sound. Tap Sound again after interacting with the page.", "info");
+        });
       }
     } catch (error) {
       console.error(error);
@@ -1223,13 +1249,25 @@ async function initFeed(user) {
           if (opportunityId) {
             recordView(opportunityId);
           }
-          video?.play().catch(() => {});
+          if (video) {
+            const muted = getFeedVideoMutedPreference();
+            if (!muted) {
+              muteOtherFeedVideos(slides, video);
+            }
+            video.muted = muted;
+            syncFeedVideoAudioButton(entry.target, muted);
+            video.play().catch(() => {
+              if (!muted) {
+                video.muted = true;
+                syncFeedVideoAudioButton(entry.target, true);
+              }
+            });
+          }
           return;
         }
         if (video) {
           video.muted = true;
           video.pause();
-          syncFeedVideoAudioButton(entry.target, true);
         }
       });
     },
