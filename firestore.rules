@@ -123,8 +123,59 @@ service cloud.firestore {
         );
     }
 
+    function validFollowDoc(expectedUid) {
+      return request.resource.data.keys().hasOnly([
+          'uid',
+          'displayName',
+          'username',
+          'photoURL',
+          'createdAt'
+        ])
+        && request.resource.data.uid == expectedUid
+        && request.resource.data.displayName is string
+        && request.resource.data.displayName.size() > 0
+        && request.resource.data.displayName.size() <= 80
+        && request.resource.data.username is string
+        && request.resource.data.username.size() <= 40
+        && request.resource.data.photoURL is string
+        && request.resource.data.photoURL.size() > 0
+        && request.resource.data.photoURL.size() <= 1000
+        && request.resource.data.createdAt is timestamp;
+    }
+
+    function validNotificationPayload() {
+      return request.resource.data.keys().hasOnly([
+          'type',
+          'title',
+          'body',
+          'read',
+          'createdAt',
+          'opportunityId',
+          'profileUid'
+        ])
+        && request.resource.data.type is string
+        && request.resource.data.type.size() > 0
+        && request.resource.data.type.size() <= 50
+        && request.resource.data.title is string
+        && request.resource.data.title.size() > 0
+        && request.resource.data.title.size() <= 120
+        && request.resource.data.body is string
+        && request.resource.data.body.size() > 0
+        && request.resource.data.body.size() <= 280
+        && request.resource.data.read == false
+        && request.resource.data.createdAt is timestamp
+        && (
+          !request.resource.data.keys().hasAny(['opportunityId'])
+          || request.resource.data.opportunityId is string
+        )
+        && (
+          !request.resource.data.keys().hasAny(['profileUid'])
+          || request.resource.data.profileUid is string
+        );
+    }
+
     match /users/{uid} {
-      allow read: if signedIn() && (request.auth.uid == uid || isAdmin());
+      allow read: if signedIn();
 
       allow create: if signedIn()
         && request.auth.uid == uid
@@ -149,9 +200,27 @@ service cloud.firestore {
 
       match /notifications/{notificationId} {
         allow read: if signedIn() && (request.auth.uid == uid || isAdmin());
-        allow create: if signedIn() && (request.auth.uid == uid || isAdmin());
+        allow create: if signedIn() && validNotificationPayload();
         allow update: if signedIn() && (request.auth.uid == uid || isAdmin());
         allow delete: if isAdmin();
+      }
+
+      match /following/{targetUid} {
+        allow read: if signedIn();
+        allow create: if signedIn()
+          && request.auth.uid == uid
+          && uid != targetUid
+          && validFollowDoc(targetUid);
+        allow delete: if signedIn() && request.auth.uid == uid;
+      }
+
+      match /followers/{followerUid} {
+        allow read: if signedIn();
+        allow create: if signedIn()
+          && request.auth.uid == followerUid
+          && followerUid != uid
+          && validFollowDoc(followerUid);
+        allow delete: if signedIn() && request.auth.uid == followerUid;
       }
     }
 

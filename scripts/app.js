@@ -430,6 +430,18 @@ function commentsUrl(opportunityId) {
   return `comments.html?id=${encodeURIComponent(opportunityId)}`;
 }
 
+function profileUrl(uid) {
+  return uid ? `profile.html?uid=${encodeURIComponent(uid)}` : "profile.html";
+}
+
+function profileDisplayName(profile) {
+  return profile?.displayName || "Oval User";
+}
+
+function profileHandleText(profile) {
+  return profile?.username ? `@${profile.username}` : "";
+}
+
 function opportunityMedia(opportunity) {
   return opportunity?.media?.url || opportunity?.mediaUrl || DEFAULT_COVER;
 }
@@ -693,6 +705,125 @@ async function findUserByEmail(email) {
     console.warn("User email lookup failed.", error);
     return null;
   }
+}
+
+async function loadUserProfileByUid(uid) {
+  if (!uid) {
+    return null;
+  }
+  try {
+    const snapshot = await withTimeout(getDoc(doc(db, "users", uid)));
+    if (!snapshot.exists()) {
+      return null;
+    }
+    return {
+      id: snapshot.id,
+      ...snapshot.data(),
+    };
+  } catch (error) {
+    console.warn("Profile load timed out.", error);
+    return null;
+  }
+}
+
+async function loadFollowCollection(uid, collectionName) {
+  if (!uid) {
+    return [];
+  }
+  try {
+    const snapshot = await withTimeout(getDocs(collection(db, "users", uid, collectionName)));
+    return snapshot.docs.map((item) => ({
+      id: item.id,
+      ...item.data(),
+    }));
+  } catch (error) {
+    console.warn(`${collectionName} load timed out.`, error);
+    return [];
+  }
+}
+
+async function loadFollowCounts(uid) {
+  const [followers, following] = await Promise.all([
+    loadFollowCollection(uid, "followers"),
+    loadFollowCollection(uid, "following"),
+  ]);
+  return {
+    followersCount: followers.length,
+    followingCount: following.length,
+  };
+}
+
+async function loadFollowingIds(uid) {
+  const items = await loadFollowCollection(uid, "following");
+  return new Set(items.map((item) => item.id));
+}
+
+async function isFollowingUser(uid, targetUid) {
+  if (!uid || !targetUid || uid === targetUid) {
+    return false;
+  }
+  try {
+    const snapshot = await withTimeout(getDoc(doc(db, "users", uid, "following", targetUid)));
+    return snapshot.exists();
+  } catch (error) {
+    console.warn("Follow state load timed out.", error);
+    return false;
+  }
+}
+
+async function setFollowState(user, currentProfile, targetProfile, shouldFollow) {
+  if (!user?.uid || !targetProfile?.id || user.uid === targetProfile.id) {
+    throw new Error("You can only follow other users.");
+  }
+
+  const followingRef = doc(db, "users", user.uid, "following", targetProfile.id);
+  const followerRef = doc(db, "users", targetProfile.id, "followers", user.uid);
+  const now = Timestamp.now();
+  let changed = false;
+
+  await runTransaction(db, async (transaction) => {
+    const currentFollow = await transaction.get(followingRef);
+    if (shouldFollow) {
+      if (currentFollow.exists()) {
+        return;
+      }
+      transaction.set(followingRef, {
+        uid: targetProfile.id,
+        displayName: profileDisplayName(targetProfile),
+        username: targetProfile.username || "",
+        photoURL: targetProfile.photoURL || DEFAULT_AVATAR,
+        createdAt: now,
+      });
+      transaction.set(followerRef, {
+        uid: user.uid,
+        displayName: profileDisplayName(currentProfile),
+        username: currentProfile.username || "",
+        photoURL: currentProfile.photoURL || DEFAULT_AVATAR,
+        createdAt: now,
+      });
+      changed = true;
+      return;
+    }
+    if (!currentFollow.exists()) {
+      return;
+    }
+    transaction.delete(followingRef);
+    transaction.delete(followerRef);
+    changed = true;
+  });
+
+  if (changed && shouldFollow) {
+    await createNotification(targetProfile.id, {
+      type: "follow",
+      title: "New follower",
+      body: `${profileDisplayName(currentProfile)} started following you.`,
+      profileUid: user.uid,
+    }).catch((error) => {
+      console.warn("Follow notification failed.", error);
+    });
+  }
+
+  return changed;
 }
 
 async function loadOpportunity(opportunityId, options = {}) {
@@ -1373,6 +1504,8 @@ async function recordView(opportunityId) {
 
 function renderOpportunityListCard(opportunity, state = {}, options = {}) {
   const opportunityStatus = statusMeta(opportunity.status);
+  const creatorHref = opportunity.creatorUid ? profileUrl(opportunity.creatorUid) : "";
+  const creatorLabel = escapeHtml(opportunity.creatorHandle || opportunity.creatorName || "Oval Creator");
   const actions = options.showActions
     ? `
       <div class="mt-4 flex flex-wrap gap-2">
@@ -1393,7 +1526,9 @@ function renderOpportunityListCard(opportunity, state = {}, options = {}) {
           <div class="flex items-start justify-between gap-3">
             <div>
               <h3 class="font-semibold">${escapeHtml(opportunity.title)}</h3>
-              <p class="text-sm text-white/60">${escapeHtml(opportunity.creatorName || "Oval Creator")}</p>
+              ${creatorHref
+    ? `<a href="${creatorHref}" class="text-sm text-white/60 hover:text-white transition">${creatorLabel}</a>`
+    : `<p class="text-sm text-white/60">${creatorLabel}</p>`}
             </div>
             <div class="flex flex-col items-end gap-2">
               <span class="text-[10px] px-2 py-1 rounded-full bg-white text-black">${escapeHtml(opportunity.category)}</span>
@@ -1430,6 +1565,9 @@ function renderCommentThread(comment, repliesByParent, opportunity, user, profil
   const threadClass = depth ? "comment-thread comment-thread--reply" : "comment-thread";
   const rowClass = depth ? "comment-thread__row comment-thread__row--reply" : "comment-thread__row";
   const avatarClass = depth ? "comment-thread__avatar comment-thread__avatar--reply" : "comment-thread__avatar";
+  const authorHref = comment.authorUid ? profileUrl(comment.authorUid) : "";
+  const authorName = escapeHtml(comment.authorName || "Oval User");
+  const authorHandle = comment.authorHandle ? escapeHtml(comment.authorHandle) : "";
   const badges = [];
   if (isOpportunityPoster(opportunity, comment)) {
     badges.push('<span class="text-[10px] px-2 py-1 rounded-full bg-white text-black">Poster</span>');
@@ -1441,11 +1579,15 @@ function renderCommentThread(comment, repliesByParent, opportunity, user, profil
   return `
     <article class="${threadClass}">
       <div class="flex ${rowClass}">
-        <img src="${escapeHtml(comment.authorPhotoURL || DEFAULT_AVATAR)}" class="${avatarClass} rounded-full object-cover shrink-0" alt="${escapeHtml(comment.authorName || "Comment author")}">
+        ${authorHref
+    ? `<a href="${authorHref}" class="shrink-0"><img src="${escapeHtml(comment.authorPhotoURL || DEFAULT_AVATAR)}" class="${avatarClass} rounded-full object-cover shrink-0" alt="${escapeHtml(comment.authorName || "Comment author")}"></a>`
+    : `<img src="${escapeHtml(comment.authorPhotoURL || DEFAULT_AVATAR)}" class="${avatarClass} rounded-full object-cover shrink-0" alt="${escapeHtml(comment.authorName || "Comment author")}">`}
         <div class="flex-1 min-w-0">
           <div class="flex items-center gap-2 flex-wrap">
-            <p class="text-sm font-semibold text-white/90">${escapeHtml(comment.authorName || "Oval User")}</p>
-            ${comment.authorHandle ? `<span class="text-xs text-white/45">${escapeHtml(comment.authorHandle)}</span>` : ""}
+            ${authorHref
+    ? `<a href="${authorHref}" class="text-sm font-semibold text-white/90 hover:text-white transition">${authorName}</a>`
+    : `<p class="text-sm font-semibold text-white/90">${authorName}</p>`}
+            ${authorHandle ? `<span class="text-xs text-white/45">${authorHandle}</span>` : ""}
             ${badges.join("")}
             <span class="text-xs text-white/40">${escapeHtml(formatRelativeDate(comment.createdAt) || "just now")}</span>
             ${edited ? '<span class="text-[11px] text-white/35">edited</span>' : ""}
@@ -1539,6 +1681,9 @@ function muteOtherFeedVideos(container, activeVideo) {
 function renderFeedSlide(opportunity, state = {}) {
   const showAudioToggle = isVideoKind(opportunityMediaKind(opportunity));
   const muted = getFeedVideoMutedPreference();
+  const creatorHref = opportunity.creatorUid ? profileUrl(opportunity.creatorUid) : "";
+  const creatorName = escapeHtml(opportunity.creatorName || "Oval Creator");
+  const creatorLabel = escapeHtml(opportunity.creatorHandle || opportunity.creatorName || "Oval Creator");
   return `
     <section class="relative min-h-screen snap-start" data-opportunity-id="${escapeHtml(opportunity.id)}">
       <div class="absolute inset-0 pointer-events-none">
@@ -1547,9 +1692,13 @@ function renderFeedSlide(opportunity, state = {}) {
       </div>
       <div class="relative min-h-screen px-4">
         <div class="absolute right-3 z-[32] flex flex-col items-center gap-5 pointer-events-auto safe-feed-rail">
-          <div class="flex flex-col items-center">
-            <img src="${escapeHtml(creatorAvatar(opportunity))}" class="w-12 h-12 rounded-full border-2 border-white object-cover" alt="${escapeHtml(opportunity.creatorName)}">
-          </div>
+          ${creatorHref
+    ? `<a href="${creatorHref}" class="flex flex-col items-center">
+            <img src="${escapeHtml(creatorAvatar(opportunity))}" class="w-12 h-12 rounded-full border-2 border-white object-cover" alt="${creatorName}">
+          </a>`
+    : `<div class="flex flex-col items-center">
+            <img src="${escapeHtml(creatorAvatar(opportunity))}" class="w-12 h-12 rounded-full border-2 border-white object-cover" alt="${creatorName}">
+          </div>`}
           <button type="button" class="flex flex-col items-center" data-action="toggle-like" data-id="${escapeHtml(opportunity.id)}">
             <span class="material-symbols-outlined text-[30px]">${state.liked ? "favorite" : "favorite_border"}</span>
             <span class="text-xs mt-1">${escapeHtml(formatCompact(opportunity.likesCount || 0))}</span>
@@ -1580,7 +1729,9 @@ function renderFeedSlide(opportunity, state = {}) {
               <span class="chip text-[11px] px-2.5 py-1 rounded-full">${escapeHtml(opportunity.workMode)}</span>
               <span class="chip text-[11px] px-2.5 py-1 rounded-full">${escapeHtml(opportunity.category)}</span>
             </div>
-            <p class="font-semibold text-sm">${escapeHtml(opportunity.creatorHandle || opportunity.creatorName)}</p>
+            ${creatorHref
+    ? `<a href="${creatorHref}" class="font-semibold text-sm hover:text-white transition">${creatorLabel}</a>`
+    : `<p class="font-semibold text-sm">${creatorLabel}</p>`}
             <p class="text-sm mt-2 leading-5">
               ${escapeHtml(truncateText(opportunity.caption, FEED_CAPTION_LENGTH))}
             </p>
@@ -1756,24 +1907,38 @@ async function initFeed(user) {
   const states = await refreshStates(user);
   const slides = qs("#feedSlides");
   const status = qs("#feedStatus");
+  const modeButtons = qsa("[data-feed-mode]");
+  let followingIds = user ? await loadFollowingIds(user.uid) : new Set();
+  let activeMode = "for-you";
+  let activeOpportunities = opportunities;
 
   if (!slides) {
     return;
   }
 
-  if (!opportunities.length) {
-    slides.innerHTML = `
-      <section class="min-h-screen flex items-center justify-center px-6">
-        <div class="rounded-3xl bg-white/5 border border-white/10 p-6 text-center max-w-sm">
-          <h2 class="text-lg font-semibold">No live posts yet</h2>
-          <p class="text-sm text-white/60 mt-3">New submissions will appear here after admin approval.</p>
-        </div>
-      </section>
-    `;
-    return;
+  let renderedCount = 0;
+
+  function feedModeClass(mode) {
+    return mode === activeMode
+      ? "text-white border-b-2 border-white pb-1"
+      : "text-white/60";
   }
 
-  let renderedCount = 0;
+  function paintModeButtons() {
+    modeButtons.forEach((button) => {
+      button.className = feedModeClass(button.dataset.feedMode);
+    });
+  }
+
+  function selectedOpportunities() {
+    if (activeMode !== "following") {
+      return opportunities;
+    }
+    if (!user?.uid) {
+      return [];
+    }
+    return opportunities.filter((item) => item.creatorUid && followingIds.has(item.creatorUid));
+  }
 
   const observer = new IntersectionObserver(
     (entries) => {
@@ -1815,9 +1980,12 @@ async function initFeed(user) {
   );
 
   function appendFeedBatch() {
+    if (!activeOpportunities.length) {
+      return false;
+    }
     const batch = Array.from({ length: FEED_BATCH_SIZE }, (_, index) => {
-      const sourceIndex = (renderedCount + index) % opportunities.length;
-      return opportunities[sourceIndex];
+      const sourceIndex = (renderedCount + index) % activeOpportunities.length;
+      return activeOpportunities[sourceIndex];
     });
     if (!batch.length) {
       return false;
@@ -1850,10 +2018,63 @@ async function initFeed(user) {
     }
   }
 
-  appendFeedBatch();
-  ensureFeedBuffer();
+  function renderFeedEmpty(message) {
+    slides.innerHTML = `
+      <section class="min-h-screen flex items-center justify-center px-6">
+        <div class="rounded-3xl bg-white/5 border border-white/10 p-6 text-center max-w-sm">
+          <h2 class="text-lg font-semibold">Nothing here yet</h2>
+          <p class="text-sm text-white/60 mt-3">${escapeHtml(message)}</p>
+        </div>
+      </section>
+    `;
+  }
+
+  function rebuildFeed() {
+    Array.from(slides.children).forEach((section) => observer.unobserve(section));
+    slides.innerHTML = "";
+    renderedCount = 0;
+    activeOpportunities = selectedOpportunities();
+    paintModeButtons();
+    setStatus(status, "");
+
+    if (!opportunities.length) {
+      renderFeedEmpty("New submissions will appear here after admin approval.");
+      return;
+    }
+    if (!activeOpportunities.length) {
+      renderFeedEmpty(
+        activeMode === "following"
+          ? user?.uid
+            ? "Follow some creators to build your following feed."
+            : "Sign in to see posts from accounts you follow."
+          : "No live posts yet.",
+      );
+      return;
+    }
+
+    appendFeedBatch();
+    ensureFeedBuffer();
+  }
 
   await bindOpportunityActionButtons(slides, opportunities, states, user, status);
+
+  modeButtons.forEach((button) => {
+    button.addEventListener("click", async () => {
+      const nextMode = button.dataset.feedMode || "for-you";
+      if (nextMode === activeMode) {
+        return;
+      }
+      if (nextMode === "following" && !user?.uid) {
+        setStatus(status, "Sign in to see posts from accounts you follow.", "info");
+        return;
+      }
+      if (nextMode === "following") {
+        followingIds = await loadFollowingIds(user.uid);
+      }
+      activeMode = nextMode;
+      rebuildFeed();
+    });
+  });
 
   slides.addEventListener("click", async (event) => {
     const shareButton = event.target.closest("[data-share-id]");
@@ -1883,6 +2104,8 @@ async function initFeed(user) {
     }
   });
   slides.addEventListener("scroll", maybeAppendMore, { passive: true });
+  paintModeButtons();
+  rebuildFeed();
 }
 
 async function initDetails(user, profile) {
@@ -1934,6 +2157,16 @@ async function initDetails(user, profile) {
   if (creatorImage) {
     creatorImage.src = creatorAvatar(opportunity);
     creatorImage.alt = opportunity.creatorName;
+  }
+  const creatorLink = qs("#detailsCreatorLink");
+  if (creatorLink) {
+    if (opportunity.creatorUid) {
+      creatorLink.href = profileUrl(opportunity.creatorUid);
+      creatorLink.classList.add("hover:text-white");
+    } else {
+      creatorLink.removeAttribute("href");
+      creatorLink.classList.remove("hover:text-white");
+    }
   }
 
   const chipRow = qs("#detailsChips");
@@ -2544,36 +2777,112 @@ function profileTabButton(activeTab, tab) {
 }
 
 async function initProfile(user, profile) {
+  const requestedPath = toRelativePath();
   if (!user || !profile) {
-    setPendingReturnTo("profile.html");
-    location.href = "sign-in-email.html?returnTo=profile.html";
+    setPendingReturnTo(requestedPath);
+    location.href = `sign-in-email.html?returnTo=${encodeURIComponent(requestedPath)}`;
     return;
   }
 
   applyNavForRole(profile);
 
-  setText("#profileHandle", `@${profile.username}`);
-  setText("#profileName", profile.displayName);
-  setText("#profileBio", profile.bio);
-  const avatar = qs("#profileAvatar");
-  if (avatar) {
-    avatar.src = profile.photoURL || DEFAULT_AVATAR;
-    avatar.alt = profile.displayName;
-  }
-
-  const opportunities = await loadPublicOpportunities();
-  const states = await loadUserStates(user.uid);
-  const myPosts = await loadUserOpportunities(user.uid);
-  const opportunityMap = new Map([...opportunities, ...myPosts].map((item) => [item.id, item]));
-
-  const creatorButton = qs("#creatorDashboardLink");
-  if (creatorButton) {
-    creatorButton.classList.remove("hidden");
-  }
-
+  const params = new URLSearchParams(location.search);
+  const requestedUid = params.get("uid");
+  const ownProfile = {
+    id: user.uid,
+    ...profile,
+  };
+  const isOwnProfile = !requestedUid || requestedUid === user.uid;
+  const viewedProfile = isOwnProfile ? ownProfile : await loadUserProfileByUid(requestedUid);
   const content = qs("#profileTabContent");
   const status = qs("#profileStatus");
-  let activeTab = new URLSearchParams(location.search).get("tab") || "posts";
+  const signOutButton = qs("#profileSignOut");
+  const signOutIcon = qs(".material-symbols-outlined", signOutButton);
+  const settingsLink = qs("#profileSettingsLink");
+  const creatorButton = qs("#creatorDashboardLink");
+  const followButton = qs("#profileFollowButton");
+  const tabs = qs("#profileTabs");
+  const savedTab = qs("#profileSavedTab");
+  const appliedTab = qs("#profileAppliedTab");
+
+  if (!viewedProfile) {
+    setText("#profileHandle", "@unknown");
+    setText("#profileName", "Profile unavailable");
+    setText("#profileBio", "This user profile could not be found.");
+    setText("#profilePostsCount", "0");
+    setText("#profileFollowersCount", "0");
+    setText("#profileFollowingCount", "0");
+    const avatarFallback = qs("#profileAvatar");
+    if (avatarFallback) {
+      avatarFallback.src = DEFAULT_AVATAR;
+      avatarFallback.alt = "Profile unavailable";
+    }
+    settingsLink?.classList.add("hidden");
+    creatorButton?.classList.add("hidden");
+    followButton?.classList.add("hidden");
+    tabs.className = "grid grid-cols-1 mt-6 border-b border-white/10 text-center text-sm";
+    savedTab?.classList.add("hidden");
+    appliedTab?.classList.add("hidden");
+    if (signOutButton) {
+      signOutButton.onclick = () => {
+        location.href = "feed.html";
+      };
+    }
+    if (signOutIcon) {
+      signOutIcon.textContent = "arrow_back";
+    }
+    content.innerHTML =
+      '<div class="rounded-3xl bg-white/5 border border-white/10 p-6 text-sm text-white/60">This profile is unavailable.</div>';
+    return;
+  }
+
+  const viewingOwnProfile = viewedProfile.id === user.uid;
+  const viewedPublicOpportunities = viewingOwnProfile
+    ? await loadUserOpportunities(user.uid)
+    : (await loadPublicOpportunities()).filter((item) => item.creatorUid === viewedProfile.id);
+  const publicOpportunities = viewingOwnProfile
+    ? await loadPublicOpportunities()
+    : viewedPublicOpportunities;
+  const states = await loadUserStates(user.uid);
+  const opportunityMap = new Map([...publicOpportunities, ...viewedPublicOpportunities].map((item) => [item.id, item]));
+  let followCounts = await loadFollowCounts(viewedProfile.id);
+  let isFollowing = !viewingOwnProfile && await isFollowingUser(user.uid, viewedProfile.id);
+
+  setText("#profileHandle", profileHandleText(viewedProfile) || profileDisplayName(viewedProfile));
+  setText("#profileName", profileDisplayName(viewedProfile));
+  setText("#profileBio", viewedProfile.bio || defaultBio());
+  const avatar = qs("#profileAvatar");
+  if (avatar) {
+    avatar.src = viewedProfile.photoURL || DEFAULT_AVATAR;
+    avatar.alt = profileDisplayName(viewedProfile);
+  }
+
+  if (signOutButton) {
+    signOutButton.onclick = viewingOwnProfile
+      ? async () => {
+        await signOut(auth);
+        location.href = "onboarding.html";
+      }
+      : () => {
+        if (window.history.length > 1) {
+          window.history.back();
+        } else {
+          location.href = "feed.html";
+        }
+      };
+  }
+  if (signOutIcon) {
+    signOutIcon.textContent = viewingOwnProfile ? "logout" : "arrow_back";
+  }
+  settingsLink?.classList.toggle("hidden", !viewingOwnProfile);
+  creatorButton?.classList.toggle("hidden", !viewingOwnProfile);
+  followButton?.classList.toggle("hidden", viewingOwnProfile);
+  tabs.className = viewingOwnProfile
+    ? "grid grid-cols-3 mt-6 border-b border-white/10 text-center text-sm"
+    : "grid grid-cols-1 mt-6 border-b border-white/10 text-center text-sm";
+  savedTab?.classList.toggle("hidden", !viewingOwnProfile);
+  appliedTab?.classList.toggle("hidden", !viewingOwnProfile);
+  let activeTab = viewingOwnProfile ? (params.get("tab") || "posts") : "posts";
 
   function savedItems() {
     return Array.from(states.entries())
@@ -2588,18 +2897,40 @@ async function initProfile(user, profile) {
   }
 
   function refreshCounts() {
-    setText("#profilePostsCount", String(myPosts.length));
-    setText("#profileSavedCount", String(savedItems().length));
-    setText("#profileAppliedCount", String(appliedItems().length));
+    setText("#profilePostsCount", String(viewedPublicOpportunities.length));
+    setText("#profileFollowersCount", String(followCounts.followersCount));
+    setText("#profileFollowingCount", String(followCounts.followingCount));
+  }
+
+  function paintFollowButton() {
+    if (!followButton || viewingOwnProfile) {
+      return;
+    }
+    followButton.textContent = isFollowing ? "Unfollow" : "Follow";
+    followButton.className = isFollowing
+      ? "flex-1 bg-white/10 text-white border border-white/10 font-semibold rounded-xl py-3"
+      : "flex-1 bg-white text-black font-semibold rounded-xl py-3";
   }
 
   function renderPosts() {
-    if (!myPosts.length) {
+    if (!viewedPublicOpportunities.length) {
       content.innerHTML =
-        '<div class="rounded-3xl bg-white/5 border border-white/10 p-6 text-sm text-white/60">You have not posted any opportunities yet.</div>';
+        `<div class="rounded-3xl bg-white/5 border border-white/10 p-6 text-sm text-white/60">${viewingOwnProfile ? "You have not posted any opportunities yet." : "This user has not published any posts yet."}</div>`;
       return;
     }
-    content.innerHTML = myPosts
+    if (!viewingOwnProfile) {
+      content.innerHTML = viewedPublicOpportunities
+        .map((item) => renderOpportunityListCard(item, states.get(item.id) || {}, {
+          showActions: true,
+          showApply: true,
+          showApplied: true,
+          showSave: true,
+          showDetails: true,
+        }))
+        .join("");
+      return;
+    }
+    content.innerHTML = viewedPublicOpportunities
       .map(
         (item) => {
           const itemStatus = statusMeta(item.status);
@@ -2671,7 +3002,7 @@ async function initProfile(user, profile) {
     qsa("[data-profile-tab]").forEach((button) => {
       button.className = profileTabButton(activeTab, button.dataset.profileTab);
     });
-    if (activeTab === "posts") {
+    if (!viewingOwnProfile || activeTab === "posts") {
       renderPosts();
     } else if (activeTab === "saved") {
       renderSaved();
@@ -2682,25 +3013,48 @@ async function initProfile(user, profile) {
 
   qsa("[data-profile-tab]").forEach((button) => {
     button.addEventListener("click", () => {
+      if (!viewingOwnProfile && button.dataset.profileTab !== "posts") {
+        return;
+      }
       activeTab = button.dataset.profileTab;
       renderTab();
     });
   });
 
-  const signOutButton = qs("#profileSignOut");
-  if (signOutButton) {
-    signOutButton.addEventListener("click", async () => {
-      await signOut(auth);
-      location.href = "onboarding.html";
-    });
+  if (followButton && !viewingOwnProfile) {
+    paintFollowButton();
+    followButton.onclick = async () => {
+      followButton.disabled = true;
+      setStatus(status, "");
+      const nextFollowState = !isFollowing;
+      try {
+        await setFollowState(user, ownProfile, viewedProfile, nextFollowState);
+        isFollowing = nextFollowState;
+        followCounts = await loadFollowCounts(viewedProfile.id);
+        paintFollowButton();
+        refreshCounts();
+        setStatus(
+          status,
+          nextFollowState
+            ? `You are now following ${profileDisplayName(viewedProfile)}.`
+            : `You unfollowed ${profileDisplayName(viewedProfile)}.`,
+          "success",
+        );
+      } catch (error) {
+        console.error(error);
+        setStatus(status, error.message || "Follow action failed.", "error");
+      } finally {
+        followButton.disabled = false;
+      }
+    };
   }
 
   refreshCounts();
+  paintFollowButton();
   renderTab();
-  await bindOpportunityActionButtons(content, opportunities, states, user, status);
+  await bindOpportunityActionButtons(content, publicOpportunities, states, user, status);
   window.addEventListener("oval:state-changed", () => {
-    refreshCounts();
-    if (activeTab === "saved" || activeTab === "applied") {
+    if (viewingOwnProfile && (activeTab === "saved" || activeTab === "applied")) {
       renderTab();
     }
   });
@@ -3206,7 +3560,7 @@ async function initNotifications(user, profile) {
         <div class="rounded-3xl bg-white/5 border border-white/10 p-4">
           <div class="flex gap-3">
             <div class="w-12 h-12 rounded-2xl bg-white/10 border border-white/10 flex items-center justify-center shrink-0">
-              <span class="material-symbols-outlined">${item.type?.includes("application") ? "task_alt" : "notifications"}</span>
+              <span class="material-symbols-outlined">${item.type === "follow" ? "person_add" : item.type?.includes("application") ? "task_alt" : "notifications"}</span>
             </div>
             <div class="flex-1 min-w-0">
               <p class="font-semibold">${escapeHtml(item.title)}</p>

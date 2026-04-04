@@ -22,7 +22,7 @@
         <span class="material-symbols-outlined">logout</span>
       </button>
       <h1 id="profileHandle" class="font-semibold"></h1>
-      <a href="settings-notifications.html" class="w-10 h-10 rounded-full bg-white/5 flex items-center justify-center">
+      <a id="profileSettingsLink" href="settings-notifications.html" class="w-10 h-10 rounded-full bg-white/5 flex items-center justify-center">
         <span class="material-symbols-outlined">settings</span>
       </a>
     </div>
@@ -34,26 +34,26 @@
 
       <div class="flex justify-center gap-8 mt-5 text-center">
         <div><p id="profilePostsCount" class="font-bold text-lg">0</p><p class="text-xs text-white/50">Posts</p></div>
-        <div><p id="profileSavedCount" class="font-bold text-lg">0</p><p class="text-xs text-white/50">Saved</p></div>
-        <div><p id="profileAppliedCount" class="font-bold text-lg">0</p><p class="text-xs text-white/50">Applied</p></div>
+        <div><p id="profileFollowersCount" class="font-bold text-lg">0</p><p class="text-xs text-white/50">Followers</p></div>
+        <div><p id="profileFollowingCount" class="font-bold text-lg">0</p><p class="text-xs text-white/50">Following</p></div>
       </div>
 
       <div class="flex gap-3 mt-5">
-        <a href="profile.html?tab=saved" class="flex-1 bg-white text-black font-semibold rounded-xl py-3">Saved</a>
+        <button id="profileFollowButton" type="button" class="hidden flex-1 bg-white text-black font-semibold rounded-xl py-3">Follow</button>
         <a id="creatorDashboardLink" href="creator-dashboard.html" class="px-4 border border-white/20 rounded-xl flex items-center justify-center">
           <span class="material-symbols-outlined">bar_chart</span>
         </a>
       </div>
     </div>
 
-    <div class="grid grid-cols-3 mt-6 border-b border-white/10 text-center text-sm">
-      <button data-profile-tab="posts" class="py-3 border-b-2 border-white font-semibold flex items-center justify-center gap-1">
+    <div id="profileTabs" class="grid grid-cols-3 mt-6 border-b border-white/10 text-center text-sm">
+      <button id="profilePostsTab" data-profile-tab="posts" class="py-3 border-b-2 border-white font-semibold flex items-center justify-center gap-1">
         <span class="material-symbols-outlined text-[18px]">grid_view</span>Posts
       </button>
-      <button data-profile-tab="saved" class="py-3 text-white/50 flex items-center justify-center gap-1">
+      <button id="profileSavedTab" data-profile-tab="saved" class="py-3 text-white/50 flex items-center justify-center gap-1">
         <span class="material-symbols-outlined text-[18px]">bookmark</span>Saved
       </button>
-      <button data-profile-tab="applied" class="py-3 text-white/50 flex items-center justify-center gap-1">
+      <button id="profileAppliedTab" data-profile-tab="applied" class="py-3 text-white/50 flex items-center justify-center gap-1">
         <span class="material-symbols-outlined text-[18px]">task_alt</span>Applied
       </button>
     </div>
