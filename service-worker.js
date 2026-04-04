@@ -1,4 +1,4 @@
-const CACHE_VERSION = "v11";
+const CACHE_VERSION = "v12";
 const STATIC_CACHE = `oval-static-${CACHE_VERSION}`;
 const RUNTIME_CACHE = `oval-runtime-${CACHE_VERSION}`;
 const OFFLINE_URL = "./offline.html";

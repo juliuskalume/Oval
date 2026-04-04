@@ -439,6 +439,121 @@ function renderFatalError(error) {
   document.body.appendChild(banner);
 }
 
+const confirmModalState = {
+  resolve: null,
+  onKeydown: null,
+};
+
+function ensureConfirmModal() {
+  let modal = document.getElementById("appConfirmModal");
+  if (modal) {
+    return modal;
+  }
+  modal = document.createElement("div");
+  modal.id = "appConfirmModal";
+  modal.className = "hidden fixed inset-0 z-[10000] items-end sm:items-center justify-center bg-black/70 backdrop-blur-sm p-4";
+  modal.innerHTML = `
+    <div class="w-full max-w-sm rounded-3xl border border-white/10 bg-[#0b1220] shadow-2xl shadow-black/40">
+      <div class="p-5">
+        <div class="w-12 h-12 rounded-2xl bg-white/10 border border-white/10 flex items-center justify-center">
+          <span class="material-symbols-outlined" id="appConfirmModalIcon">logout</span>
+        </div>
+        <h2 id="appConfirmModalTitle" class="mt-4 text-lg font-semibold">Confirm action</h2>
+        <p id="appConfirmModalMessage" class="mt-2 text-sm text-white/60">Are you sure you want to continue?</p>
+      </div>
+      <div class="px-5 pb-5 flex gap-3">
+        <button type="button" data-confirm-cancel class="flex-1 h-12 rounded-2xl bg-white/10 border border-white/10 font-semibold text-white">Cancel</button>
+        <button type="button" data-confirm-accept class="flex-1 h-12 rounded-2xl bg-red-500 text-white font-semibold">Continue</button>
+      </div>
+    </div>
+  `;
+  modal.addEventListener("click", (event) => {
+    if (event.target === modal || event.target.closest("[data-confirm-cancel]")) {
+      closeConfirmModal(false);
+      return;
+    }
+    if (event.target.closest("[data-confirm-accept]")) {
+      closeConfirmModal(true);
+    }
+  });
+  document.body.appendChild(modal);
+  return modal;
+}
+
+function closeConfirmModal(confirmed = false) {
+  const modal = document.getElementById("appConfirmModal");
+  if (modal) {
+    modal.classList.add("hidden");
+    modal.classList.remove("flex");
+  }
+  document.body.style.removeProperty("overflow");
+  if (confirmModalState.onKeydown) {
+    document.removeEventListener("keydown", confirmModalState.onKeydown);
+    confirmModalState.onKeydown = null;
+  }
+  const resolve = confirmModalState.resolve;
+  confirmModalState.resolve = null;
+  if (resolve) {
+    resolve(confirmed);
+  }
+}
+
+function confirmAction(options = {}) {
+  const {
+    title = "Confirm action",
+    message = "Are you sure you want to continue?",
+    confirmLabel = "Continue",
+    cancelLabel = "Cancel",
+    icon = "logout",
+    tone = "danger",
+  } = options;
+  const modal = ensureConfirmModal();
+  if (confirmModalState.resolve) {
+    closeConfirmModal(false);
+  }
+
+  setText("#appConfirmModalTitle", title);
+  setText("#appConfirmModalMessage", message);
+  setText("#appConfirmModalIcon", icon);
+
+  const cancelButton = qs("[data-confirm-cancel]", modal);
+  const confirmButton = qs("[data-confirm-accept]", modal);
+  if (cancelButton) {
+    cancelButton.textContent = cancelLabel;
+  }
+  if (confirmButton) {
+    confirmButton.textContent = confirmLabel;
+    confirmButton.className = tone === "danger"
+      ? "flex-1 h-12 rounded-2xl bg-red-500 text-white font-semibold"
+      : "flex-1 h-12 rounded-2xl theme-primary font-semibold";
+  }
+
+  modal.classList.remove("hidden");
+  modal.classList.add("flex");
+  document.body.style.overflow = "hidden";
+
+  return new Promise((resolve) => {
+    confirmModalState.resolve = resolve;
+    confirmModalState.onKeydown = (event) => {
+      if (event.key === "Escape") {
+        closeConfirmModal(false);
+      }
+    };
+    document.addEventListener("keydown", confirmModalState.onKeydown);
+  });
+}
+
+function confirmSignOut() {
+  return confirmAction({
+    title: "Log out?",
+    message: "You will need to sign in again to manage your profile, inbox, and posts.",
+    confirmLabel: "Log out",
+    cancelLabel: "Stay signed in",
+    icon: "logout",
+    tone: "danger",
+  });
+}
+
 function setText(selector, value) {
   const node = typeof selector === "string" ? qs(selector) : selector;
   if (node) {
@@ -2952,8 +3067,17 @@ async function initProfile(user, profile) {
   if (signOutButton) {
     signOutButton.onclick = viewingOwnProfile
       ? async () => {
-        await signOut(auth);
-        location.href = "onboarding.html";
+        const confirmed = await confirmSignOut();
+        if (!confirmed) {
+          return;
+        }
+        try {
+          await signOut(auth);
+          location.href = "onboarding.html";
+        } catch (error) {
+          console.error(error);
+          setStatus(status, error.message || "Logout failed.", "error");
+        }
       }
       : () => {
         if (window.history.length > 1) {
@@ -3809,8 +3933,17 @@ async function initSettings(user, profile) {
   });
 
   signOutButton?.addEventListener("click", async () => {
-    await signOut(auth);
-    location.href = "onboarding.html";
+    const confirmed = await confirmSignOut();
+    if (!confirmed) {
+      return;
+    }
+    try {
+      await signOut(auth);
+      location.href = "onboarding.html";
+    } catch (error) {
+      console.error(error);
+      setStatus(status, error.message || "Logout failed.", "error");
+    }
   });
 }
 
