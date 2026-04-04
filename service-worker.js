@@ -1,4 +1,4 @@
-const CACHE_VERSION = "v10";
+const CACHE_VERSION = "v11";
 const STATIC_CACHE = `oval-static-${CACHE_VERSION}`;
 const RUNTIME_CACHE = `oval-runtime-${CACHE_VERSION}`;
 const OFFLINE_URL = "./offline.html";
@@ -17,7 +17,7 @@ const APP_SHELL_FILES = [
   "./creator-dashboard.html",
   "./admin-moderation.html",
   "./comments.html",
-  "./notifications.html",
+  "./inbox.html",
   "./settings.html",
   "./edit-post.html",
   "./manifest.webmanifest",

@@ -945,6 +945,65 @@ async function loadUserNotifications(uid) {
   }));
 }
 
+async function loadUnreadNotifications(uid) {
+  if (!uid) {
+    return [];
+  }
+  try {
+    const snapshot = await withTimeout(
+      getDocs(query(collection(db, "users", uid, "notifications"), where("read", "==", false))),
+    );
+    return snapshot.docs.map((item) => ({
+      id: item.id,
+      ...item.data(),
+    }));
+  } catch (error) {
+    console.warn("Unread notification load timed out.", error);
+    return [];
+  }
+}
+
+async function markNotificationsRead(uid, notificationIds = []) {
+  if (!uid || !notificationIds.length) {
+    return;
+  }
+  await Promise.all(
+    notificationIds.map((notificationId) => updateDoc(
+      doc(db, "users", uid, "notifications", notificationId),
+      {
+        read: true,
+      },
+    )),
+  );
+}
+
+function paintInboxNavIndicator(hasUnread) {
+  qsa("[data-nav-inbox]").forEach((link) => {
+    link.classList.add("relative");
+    let dot = qs("[data-inbox-dot]", link);
+    if (!dot) {
+      dot = document.createElement("span");
+      dot.dataset.inboxDot = "true";
+      dot.className = "hidden absolute top-1 right-3 w-2.5 h-2.5 rounded-full bg-emerald-400 border border-slate-950 shadow-[0_0_10px_rgba(16,185,129,0.65)]";
+      link.appendChild(dot);
+    }
+    dot.classList.toggle("hidden", !hasUnread);
+  });
+}
+
+async function refreshInboxNavIndicator(user, options = {}) {
+  if (!user?.uid) {
+    paintInboxNavIndicator(false);
+    return false;
+  }
+  const unreadItems = Array.isArray(options.unreadItems)
+    ? options.unreadItems
+    : await loadUnreadNotifications(user.uid);
+  const hasUnread = unreadItems.some((item) => item.read === false);
+  paintInboxNavIndicator(hasUnread);
+  return hasUnread;
+}
+
 async function createNotification(uid, payload) {
   if (!uid) {
     return;
@@ -3571,20 +3630,34 @@ async function initAdminModeration(user, profile) {
   await refresh();
 }
 
-async function initNotifications(user, profile) {
+async function initInbox(user, profile) {
   if (!user || !profile) {
-    setPendingReturnTo("notifications.html");
-    location.href = "sign-in-email.html?returnTo=notifications.html";
+    setPendingReturnTo("inbox.html");
+    location.href = "sign-in-email.html?returnTo=inbox.html";
     return;
   }
   const items = await loadUserNotifications(user.uid);
+  const unreadItems = items.filter((item) => item.read === false);
   const list = qs("#notificationsList");
   if (!list) {
     return;
   }
+  if (unreadItems.length) {
+    try {
+      await markNotificationsRead(user.uid, unreadItems.map((item) => item.id));
+      unreadItems.forEach((item) => {
+        item.read = true;
+      });
+    } catch (error) {
+      console.warn("Failed to mark inbox items as read.", error);
+    }
+  }
+  await refreshInboxNavIndicator(user, {
+    unreadItems: items.filter((item) => item.read === false),
+  });
   if (!items.length) {
     list.innerHTML =
-      '<div class="rounded-3xl bg-white/5 border border-white/10 p-6 text-sm text-white/60">No notifications yet.</div>';
+      '<div class="rounded-3xl bg-white/5 border border-white/10 p-6 text-sm text-white/60">No updates yet.</div>';
     return;
   }
   list.innerHTML = items
@@ -3746,6 +3819,9 @@ async function main() {
   const profile = user ? await ensureUserProfile(user) : null;
 
   applyNavForRole(profile);
+  if (page !== "inbox" && page !== "notifications") {
+    await refreshInboxNavIndicator(user);
+  }
 
   if (page === "onboarding") {
     await initOnboarding(user, profile);
@@ -3791,8 +3867,8 @@ async function main() {
     await initAdminModeration(user, profile);
     return;
   }
-  if (page === "notifications") {
-    await initNotifications(user, profile);
+  if (page === "inbox" || page === "notifications") {
+    await initInbox(user, profile);
     return;
   }
   if (page === "settings") {
