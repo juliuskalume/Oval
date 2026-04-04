@@ -9,6 +9,11 @@
       "source": "/sign-in-google.html",
       "destination": "/onboarding.html",
       "permanent": false
+    },
+    {
+      "source": "/saved-posts.html",
+      "destination": "/profile.html?tab=saved",
+      "permanent": false
     }
   ]
 }

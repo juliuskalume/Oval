@@ -2526,37 +2526,15 @@ async function initSearch(user) {
 }
 
 async function initSaved(user, profile) {
+  const savedTabPath = "profile.html?tab=saved";
   if (!user || !profile) {
-    setPendingReturnTo("saved-posts.html");
-    location.href = "sign-in-email.html?returnTo=saved-posts.html";
+    setPendingReturnTo(savedTabPath);
+    location.href = `sign-in-email.html?returnTo=${encodeURIComponent(savedTabPath)}`;
     return;
   }
-  const states = await loadUserStates(user.uid);
-  const opportunities = await loadPublicOpportunities();
-  const opportunityMap = new Map(opportunities.map((item) => [item.id, item]));
-  const savedItems = Array.from(states.entries())
-    .filter(([, item]) => item.saved)
-    .map(([id, item]) => opportunityMap.get(id) || { id, ...item });
-
-  const list = qs("#savedPostsList");
-  const status = qs("#savedStatus");
-  if (!savedItems.length) {
-    list.innerHTML =
-      '<div class="rounded-3xl bg-white/5 border border-white/10 p-6 text-sm text-white/60">You have not saved any opportunities yet.</div>';
-    return;
+  if (location.pathname.endsWith("saved-posts.html") || page === "saved") {
+    location.replace(savedTabPath);
   }
-
-  list.innerHTML = savedItems
-    .map((opportunity) => renderOpportunityListCard(opportunity, states.get(opportunity.id) || {}, {
-      showActions: true,
-      showSave: false,
-      showApply: true,
-      showApplied: true,
-      showRemove: true,
-    }))
-    .join("");
-
-  await bindOpportunityActionButtons(list, opportunities, states, user, status);
 }
 
 function profileTabButton(activeTab, tab) {

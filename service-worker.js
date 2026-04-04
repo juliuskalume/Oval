@@ -1,4 +1,4 @@
-const CACHE_VERSION = "v7";
+const CACHE_VERSION = "v8";
 const STATIC_CACHE = `oval-static-${CACHE_VERSION}`;
 const RUNTIME_CACHE = `oval-runtime-${CACHE_VERSION}`;
 const OFFLINE_URL = "./offline.html";
@@ -12,7 +12,6 @@ const APP_SHELL_FILES = [
   "./feed.html",
   "./details.html",
   "./search.html",
-  "./saved-posts.html",
   "./profile.html",
   "./create-post.html",
   "./creator-dashboard.html",
