@@ -35,7 +35,7 @@ const BOOTSTRAP_ADMIN_EMAILS = new Set([
 const MAX_CAPTION_LENGTH = 150;
 const FEED_CAPTION_LENGTH = 100;
 const FEED_BATCH_SIZE = 4;
-const FEED_VIDEO_MUTED_KEY = "oval.feedVideoMuted";
+const FEED_VIDEO_SOUND_KEY = "oval.feedVideoSoundEnabled";
 const DEFAULT_COVER =
   "https://images.unsplash.com/photo-1521737604893-d14cc237f11d?auto=format&fit=crop&w=1200&q=80";
 const DEFAULT_AVATAR =
@@ -117,7 +117,8 @@ function clearPendingReturnTo() {
 
 function getFeedVideoMutedPreference() {
   try {
-    return localStorage.getItem(FEED_VIDEO_MUTED_KEY) === "1";
+    const stored = localStorage.getItem(FEED_VIDEO_SOUND_KEY);
+    return stored === null ? false : stored !== "1";
   } catch (error) {
     return false;
   }
@@ -125,7 +126,7 @@ function getFeedVideoMutedPreference() {
 
 function setFeedVideoMutedPreference(muted) {
   try {
-    localStorage.setItem(FEED_VIDEO_MUTED_KEY, muted ? "1" : "0");
+    localStorage.setItem(FEED_VIDEO_SOUND_KEY, muted ? "0" : "1");
   } catch (error) {}
 }
 
