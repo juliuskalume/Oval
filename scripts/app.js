@@ -1185,7 +1185,7 @@ function renderFeedSlide(opportunity, state = {}) {
         <div class="absolute inset-0 bg-gradient-to-t from-black/85 via-black/10 to-black/45"></div>
       </div>
       <div class="relative min-h-screen px-4">
-        <div class="absolute right-3 bottom-28 z-[32] flex flex-col items-center gap-5 pointer-events-auto">
+        <div class="absolute right-3 z-[32] flex flex-col items-center gap-5 pointer-events-auto safe-feed-rail">
           <div class="flex flex-col items-center">
             <img src="${escapeHtml(creatorAvatar(opportunity))}" class="w-12 h-12 rounded-full border-2 border-white object-cover" alt="${escapeHtml(opportunity.creatorName)}">
           </div>
@@ -1212,7 +1212,7 @@ function renderFeedSlide(opportunity, state = {}) {
             </button>
           ` : ""}
         </div>
-        <div class="absolute left-0 right-0 bottom-24 z-20 px-4 pointer-events-none">
+        <div class="absolute left-0 right-0 z-20 px-4 pointer-events-none safe-feed-content">
           <div class="max-w-[78%] pointer-events-auto">
             <div class="flex items-center gap-2 mb-3 flex-wrap">
               <span class="chip text-[11px] px-2.5 py-1 rounded-full">${escapeHtml(opportunity.payLabel)}</span>

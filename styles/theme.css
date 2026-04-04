@@ -57,6 +57,18 @@ body.app-loading {
   padding-bottom: calc(1rem + var(--safe-area-bottom)) !important;
 }
 
+.safe-feed-rail {
+  bottom: calc(7.5rem + var(--safe-area-bottom)) !important;
+}
+
+.safe-feed-content {
+  bottom: calc(7.25rem + var(--safe-area-bottom)) !important;
+}
+
+.safe-feed-status {
+  bottom: calc(7.75rem + var(--safe-area-bottom)) !important;
+}
+
 @media (min-width: 768px) {
   .phone {
     border: 1px solid var(--border-subtle);
