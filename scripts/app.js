@@ -922,7 +922,36 @@ function paintAppliedActionButton(button, applied) {
   button.textContent = applied ? "Applied" : "Mark Applied";
 }
 
+function paintVideoAudioButton(button, muted) {
+  if (!button) {
+    return;
+  }
+  const icon = qs("[data-audio-icon]", button);
+  const label = qs("[data-audio-label]", button);
+  if (icon) {
+    icon.textContent = muted ? "volume_up" : "volume_off";
+  }
+  if (label) {
+    label.textContent = muted ? "Sound" : "Mute";
+  }
+}
+
+function syncFeedVideoAudioButton(section, muted) {
+  paintVideoAudioButton(qs("[data-video-audio-button]", section), muted);
+}
+
+function muteOtherFeedVideos(container, activeVideo) {
+  qsa("video", container).forEach((video) => {
+    if (video === activeVideo) {
+      return;
+    }
+    video.muted = true;
+    syncFeedVideoAudioButton(video.closest("[data-opportunity-id]"), true);
+  });
+}
+
 function renderFeedSlide(opportunity, state = {}) {
+  const showAudioToggle = isVideoKind(opportunityMediaKind(opportunity));
   return `
     <section class="relative min-h-screen snap-start" data-opportunity-id="${escapeHtml(opportunity.id)}">
       <div class="absolute inset-0">
@@ -950,6 +979,12 @@ function renderFeedSlide(opportunity, state = {}) {
             <span class="material-symbols-outlined text-[30px]">${state.saved ? "bookmark" : "bookmark_add"}</span>
             <span class="text-xs mt-1">${state.saved ? "Saved" : "Save"}</span>
           </button>
+          ${showAudioToggle ? `
+            <button type="button" class="flex flex-col items-center" data-action="toggle-video-audio" data-id="${escapeHtml(opportunity.id)}" data-video-audio-button>
+              <span class="material-symbols-outlined text-[30px]" data-audio-icon>volume_up</span>
+              <span class="text-xs mt-1" data-audio-label>Sound</span>
+            </button>
+          ` : ""}
         </div>
         <div class="absolute left-0 right-0 bottom-24 z-20 px-4">
           <div class="max-w-[78%]">
@@ -1042,6 +1077,24 @@ async function bindOpportunityActionButtons(container, opportunities, states, us
           current.applied ? "Removed from your applied list." : "Added to your applied list.",
           "success",
         );
+        return;
+      }
+
+      if (action === "toggle-video-audio") {
+        const section = button.closest("[data-opportunity-id]");
+        const video = qs("video", section);
+        if (!video) {
+          return;
+        }
+        const nextMuted = !video.muted;
+        if (!nextMuted) {
+          muteOtherFeedVideos(container, video);
+        }
+        video.muted = nextMuted;
+        if (!nextMuted) {
+          video.play().catch(() => {});
+        }
+        paintVideoAudioButton(button, nextMuted);
       }
     } catch (error) {
       console.error(error);
@@ -1076,14 +1129,22 @@ async function initFeed(user) {
 
   const observer = new IntersectionObserver(
     (entries) => {
-      entries
-        .filter((entry) => entry.isIntersecting)
-        .forEach((entry) => {
+      entries.forEach((entry) => {
+        const video = qs("video", entry.target);
+        if (entry.isIntersecting) {
           const opportunityId = entry.target.dataset.opportunityId;
           if (opportunityId) {
             recordView(opportunityId);
           }
-        });
+          video?.play().catch(() => {});
+          return;
+        }
+        if (video) {
+          video.muted = true;
+          video.pause();
+          syncFeedVideoAudioButton(entry.target, true);
+        }
+      });
     },
     { root: slides, threshold: 0.65 },
   );
@@ -1191,11 +1252,12 @@ async function initDetails(user, profile) {
 
   const cover = qs("#detailsCover");
   if (cover) {
+    const isVideo = isVideoKind(opportunityMediaKind(opportunity));
     cover.innerHTML = renderOpportunityMedia(opportunity, "w-full h-full object-cover", {
-      muted: true,
-      loop: true,
-      autoplay: true,
-      controls: isVideoKind(opportunityMediaKind(opportunity)),
+      muted: false,
+      loop: !isVideo,
+      autoplay: false,
+      controls: isVideo,
     });
   }
   const creatorImage = qs("#detailsCreatorAvatar");
