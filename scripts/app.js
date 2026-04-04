@@ -584,7 +584,7 @@ async function initEmailAuth(user, profile) {
     title.textContent = isCreate ? "Create your account" : "Sign in with email";
     subtitle.textContent = isCreate
       ? "Create a seeker or creator account with email and password."
-      : "Access saved posts, applied opportunities, and creator tools.";
+      : "Access saved posts, applied opportunities, and posting tools.";
     submit.textContent = isCreate ? "Create account" : "Sign in";
     fillRolePreview(document);
   }
@@ -686,11 +686,7 @@ async function initGoogleAuth(user, profile) {
 
 function applyNavForRole(profile) {
   qsa("[data-create-nav]").forEach((node) => {
-    if (profile?.role === "creator" || profile?.role === "admin") {
-      node.href = "create-post.html";
-    } else {
-      node.href = "profile.html?tab=applied";
-    }
+    node.href = "create-post.html";
   });
 }
 
@@ -1331,7 +1327,7 @@ async function initProfile(user, profile) {
 
   const creatorButton = qs("#creatorDashboardLink");
   if (creatorButton) {
-    creatorButton.classList.toggle("hidden", !(profile.role === "creator" || profile.role === "admin"));
+    creatorButton.classList.remove("hidden");
   }
 
   const content = qs("#profileTabContent");
@@ -1357,11 +1353,6 @@ async function initProfile(user, profile) {
   }
 
   function renderPosts() {
-    if (!(profile.role === "creator" || profile.role === "admin")) {
-      content.innerHTML =
-        '<div class="rounded-3xl bg-white/5 border border-white/10 p-6 text-sm text-white/60">Creators see their published opportunities here. Seeker accounts use Saved and Applied.</div>';
-      return;
-    }
     if (!myPosts.length) {
       content.innerHTML =
         '<div class="rounded-3xl bg-white/5 border border-white/10 p-6 text-sm text-white/60">You have not published any opportunities yet.</div>';
@@ -1474,13 +1465,6 @@ async function initCreatePost(user, profile) {
     location.href = "sign-in-email.html?returnTo=create-post.html";
     return;
   }
-  if (!(profile.role === "creator" || profile.role === "admin")) {
-    const gate = qs("#createPostGate");
-    const form = qs("#createPostForm");
-    form?.classList.add("hidden");
-    gate?.classList.remove("hidden");
-    return;
-  }
 
   const form = qs("#createPostForm");
   const status = qs("#createPostStatus");
@@ -1500,7 +1484,7 @@ async function initCreatePost(user, profile) {
     if (editingOpportunity.seeded && profile.role !== "admin") {
       const gate = qs("#createPostGate");
       gate?.classList.remove("hidden");
-      gate.textContent = "Demo opportunities cannot be edited from creator accounts.";
+      gate.textContent = "Demo opportunities cannot be edited from this account.";
       form.classList.add("hidden");
       return;
     }
@@ -1658,10 +1642,6 @@ async function initCreatorDashboard(user, profile) {
   if (!user || !profile) {
     setPendingReturnTo("creator-dashboard.html");
     location.href = "sign-in-email.html?returnTo=creator-dashboard.html";
-    return;
-  }
-  if (!(profile.role === "creator" || profile.role === "admin")) {
-    location.href = "profile.html";
     return;
   }
 
