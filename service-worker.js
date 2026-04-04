@@ -1,4 +1,4 @@
-const CACHE_VERSION = "v2";
+const CACHE_VERSION = "v3";
 const STATIC_CACHE = `oval-static-${CACHE_VERSION}`;
 const RUNTIME_CACHE = `oval-runtime-${CACHE_VERSION}`;
 const OFFLINE_URL = "./offline.html";
@@ -24,9 +24,11 @@ const APP_SHELL_FILES = [
   "./edit-post.html",
   "./manifest.webmanifest",
   "./styles/theme.css",
+  "./styles/material-symbols.css",
   "./scripts/app.js",
   "./scripts/firebase.js",
   "./scripts/sample-data.js",
+  "./assets/fonts/material-symbols-outlined.woff2",
   "./assets/pwa/icon-any-192.png",
   "./assets/pwa/icon-any-512.png",
   "./assets/pwa/icon-maskable-192.png",
@@ -37,7 +39,6 @@ const APP_SHELL_FILES = [
 const EXTERNAL_STATIC_FILES = [
   "https://cdn.tailwindcss.com",
   "https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap",
-  "https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@24,500,0,0",
   "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js",
   "https://www.gstatic.com/firebasejs/10.12.2/firebase-analytics.js",
   "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js",
