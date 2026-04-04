@@ -37,12 +37,19 @@ const MAX_COMMENT_LENGTH = 280;
 const FEED_CAPTION_LENGTH = 100;
 const FEED_BATCH_SIZE = 4;
 const FEED_VIDEO_SOUND_KEY = "oval.feedVideoSoundEnabled";
+const SETTINGS_PREFS_KEY = "oval.settings.preferences";
 const APP_LOADER_MIN_MS = 420;
 const PWA_THEME_COLOR = "#020617";
 const DEFAULT_COVER =
   "https://images.unsplash.com/photo-1521737604893-d14cc237f11d?auto=format&fit=crop&w=1200&q=80";
 const DEFAULT_AVATAR =
   "https://images.unsplash.com/photo-1494790108377-be9c29b29330?auto=format&fit=crop&w=300&q=80";
+const DEFAULT_SETTINGS_PREFS = {
+  matchingOpportunities: true,
+  applicationUpdates: true,
+  commentsMentions: true,
+  productUpdates: false,
+};
 
 const page = document.body.dataset.page || "";
 
@@ -286,6 +293,32 @@ function getFeedVideoMutedPreference() {
 function setFeedVideoMutedPreference(muted) {
   try {
     localStorage.setItem(FEED_VIDEO_SOUND_KEY, muted ? "0" : "1");
+  } catch (error) {}
+}
+
+function getSettingsPreferences() {
+  try {
+    const stored = localStorage.getItem(SETTINGS_PREFS_KEY);
+    if (!stored) {
+      return {
+        ...DEFAULT_SETTINGS_PREFS,
+      };
+    }
+    const parsed = JSON.parse(stored);
+    return {
+      ...DEFAULT_SETTINGS_PREFS,
+      ...(parsed && typeof parsed === "object" ? parsed : {}),
+    };
+  } catch (error) {
+    return {
+      ...DEFAULT_SETTINGS_PREFS,
+    };
+  }
+}
+
+function setSettingsPreferences(preferences) {
+  try {
+    localStorage.setItem(SETTINGS_PREFS_KEY, JSON.stringify(preferences));
   } catch (error) {}
 }
 
@@ -3577,6 +3610,137 @@ async function initNotifications(user, profile) {
     .join("");
 }
 
+function paintSettingsToggle(button, enabled) {
+  if (!button) {
+    return;
+  }
+  button.setAttribute("aria-pressed", enabled ? "true" : "false");
+  button.className = enabled
+    ? "w-12 h-7 rounded-full bg-white relative shrink-0 transition"
+    : "w-12 h-7 rounded-full bg-white/15 relative shrink-0 transition";
+  button.innerHTML = enabled
+    ? '<span class="absolute right-1 top-1 w-5 h-5 rounded-full bg-black transition"></span>'
+    : '<span class="absolute left-1 top-1 w-5 h-5 rounded-full bg-white/50 transition"></span>';
+}
+
+async function initSettings(user, profile) {
+  const returnTo = "settings.html";
+  if (!user || !profile) {
+    setPendingReturnTo(returnTo);
+    location.href = `sign-in-email.html?returnTo=${encodeURIComponent(returnTo)}`;
+    return;
+  }
+
+  const status = qs("#settingsStatus");
+  const avatar = qs("#settingsAvatar");
+  const name = qs("#settingsName");
+  const handle = qs("#settingsHandle");
+  const email = qs("#settingsEmail");
+  const form = qs("#settingsProfileForm");
+  const displayNameInput = qs("#settingsDisplayName");
+  const bioInput = qs("#settingsBio");
+  const profileLink = qs("#settingsProfileLink");
+  const dashboardLink = qs("#settingsDashboardLink");
+  const moderationLink = qs("#settingsModerationLink");
+  const signOutButton = qs("#settingsSignOut");
+  const notificationPrefs = getSettingsPreferences();
+  const toggleButtons = qsa("[data-pref-key]");
+  const soundToggle = qs("[data-app-pref='feedSound']");
+
+  if (avatar) {
+    avatar.src = profile.photoURL || DEFAULT_AVATAR;
+    avatar.alt = profileDisplayName(profile);
+  }
+  setText(name, profileDisplayName(profile));
+  setText(handle, profileHandleText(profile) || "@oval");
+  setText(email, profile.email || user.email || "");
+  if (displayNameInput) {
+    displayNameInput.value = profile.displayName || "";
+  }
+  if (bioInput) {
+    bioInput.value = profile.bio || defaultBio();
+  }
+  if (profileLink) {
+    profileLink.href = profileUrl(user.uid);
+  }
+  dashboardLink?.classList.remove("hidden");
+  moderationLink?.classList.toggle("hidden", profile.role !== "admin");
+
+  toggleButtons.forEach((button) => {
+    const key = button.dataset.prefKey;
+    paintSettingsToggle(button, Boolean(notificationPrefs[key]));
+    button.addEventListener("click", () => {
+      notificationPrefs[key] = !notificationPrefs[key];
+      setSettingsPreferences(notificationPrefs);
+      paintSettingsToggle(button, notificationPrefs[key]);
+      setStatus(status, "Settings updated.", "success");
+    });
+  });
+
+  if (soundToggle) {
+    const paintSoundToggle = () => {
+      const soundOn = !getFeedVideoMutedPreference();
+      paintSettingsToggle(soundToggle, soundOn);
+      const label = qs("[data-app-pref-label='feedSound']");
+      if (label) {
+        label.textContent = soundOn ? "On by default" : "Muted by default";
+      }
+    };
+    paintSoundToggle();
+    soundToggle.addEventListener("click", () => {
+      const nextMuted = !getFeedVideoMutedPreference();
+      setFeedVideoMutedPreference(nextMuted);
+      paintSoundToggle();
+      setStatus(status, "App preference updated.", "success");
+    });
+  }
+
+  form?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const nextDisplayName = String(displayNameInput?.value || "").trim();
+    const nextBio = String(bioInput?.value || "").trim();
+    if (!nextDisplayName) {
+      setStatus(status, "Display name is required.", "error");
+      return;
+    }
+
+    const payload = {
+      displayName: nextDisplayName,
+      bio: nextBio || defaultBio(),
+      updatedAt: Timestamp.now(),
+    };
+
+    const submitButton = qs('button[type="submit"]', form);
+    if (submitButton) {
+      submitButton.disabled = true;
+    }
+    setStatus(status, "");
+
+    try {
+      await updateDoc(doc(db, "users", user.uid), payload);
+      if ((auth.currentUser?.displayName || "") !== nextDisplayName) {
+        await updateProfile(auth.currentUser, {
+          displayName: nextDisplayName,
+        });
+      }
+      setText(name, nextDisplayName);
+      setStatus(status, "Account settings saved.", "success");
+    } catch (error) {
+      console.error(error);
+      setStatus(status, error.message || "Settings update failed.", "error");
+    } finally {
+      if (submitButton) {
+        submitButton.disabled = false;
+      }
+    }
+  });
+
+  signOutButton?.addEventListener("click", async () => {
+    await signOut(auth);
+    location.href = "onboarding.html";
+  });
+}
+
 async function main() {
   const user = await withTimeout(authReady, 1500).catch(() => null);
   const profile = user ? await ensureUserProfile(user) : null;
@@ -3629,6 +3793,10 @@ async function main() {
   }
   if (page === "notifications") {
     await initNotifications(user, profile);
+    return;
+  }
+  if (page === "settings") {
+    await initSettings(user, profile);
   }
 }
 

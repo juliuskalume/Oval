@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Oval - Settings</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" />
+  <link rel="stylesheet" href="styles/material-symbols.css" />
+  <style>
+    body { font-family: Inter, sans-serif; }
+    .phone { max-width: 430px; margin: 0 auto; min-height: 100vh; background: #000; position: relative; overflow: hidden; }
+    .material-symbols-outlined { font-variation-settings: 'FILL' 0, 'wght' 500, 'GRAD' 0, 'opsz' 24; }
+    .hide-scrollbar::-webkit-scrollbar { display: none; }
+    .hide-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+  </style>
+  <link rel="stylesheet" href="styles/theme.css" />
+</head>
+<body data-page="settings" class="bg-black min-h-screen text-white">
+  <div class="phone bg-black flex flex-col">
+    <div class="px-4 pb-4 safe-top-4 border-b border-white/10 flex items-center gap-3">
+      <a href="profile.html" class="w-10 h-10 rounded-full bg-white/5 flex items-center justify-center">
+        <span class="material-symbols-outlined">arrow_back</span>
+      </a>
+      <div>
+        <h1 class="text-lg font-bold">Settings</h1>
+        <p class="text-white/50 text-sm">Account, notifications, and app preferences</p>
+      </div>
+    </div>
+
+    <div class="flex-1 overflow-y-auto hide-scrollbar px-4 py-4 pb-28 space-y-4">
+      <div id="settingsStatus" class="hidden"></div>
+
+      <section class="rounded-3xl bg-white/5 border border-white/10 p-4">
+        <div class="flex items-center gap-3">
+          <img id="settingsAvatar" src="" alt="Your avatar" class="w-14 h-14 rounded-full object-cover" />
+          <div class="min-w-0">
+            <p id="settingsName" class="font-semibold truncate"></p>
+            <p id="settingsHandle" class="text-sm text-white/60 truncate"></p>
+            <p id="settingsEmail" class="text-xs text-white/45 truncate mt-1"></p>
+          </div>
+        </div>
+        <a id="settingsProfileLink" href="profile.html" class="inline-flex mt-4 px-4 py-2 rounded-xl bg-white/10 border border-white/10 text-sm font-semibold">
+          View profile
+        </a>
+      </section>
+
+      <section class="rounded-3xl bg-white/5 border border-white/10 p-4">
+        <div class="mb-4">
+          <h2 class="font-semibold">Account</h2>
+          <p class="text-sm text-white/50 mt-1">Update the basics people see across Oval.</p>
+        </div>
+        <form id="settingsProfileForm" class="space-y-3">
+          <label class="block">
+            <span class="text-sm text-white/70">Display name</span>
+            <input id="settingsDisplayName" type="text" maxlength="80" class="mt-2 w-full rounded-2xl bg-white/10 border border-white/10 px-4 py-3 outline-none" placeholder="Your name" />
+          </label>
+          <label class="block">
+            <span class="text-sm text-white/70">Bio</span>
+            <textarea id="settingsBio" rows="3" maxlength="160" class="mt-2 w-full rounded-2xl bg-white/10 border border-white/10 px-4 py-3 outline-none resize-none" placeholder="Tell people what you do."></textarea>
+          </label>
+          <button type="submit" class="theme-primary w-full h-12 rounded-2xl font-semibold">Save changes</button>
+        </form>
+      </section>
+
+      <section class="rounded-3xl bg-white/5 border border-white/10 p-4 space-y-3">
+        <div>
+          <h2 class="font-semibold">Notifications</h2>
+          <p class="text-sm text-white/50 mt-1">Choose what Oval should notify you about.</p>
+        </div>
+
+        <div class="flex items-center justify-between gap-4 rounded-2xl bg-white/5 border border-white/10 p-4">
+          <div>
+            <p class="font-medium">New matching opportunities</p>
+            <p class="text-sm text-white/50">Alerts when posts match your interests</p>
+          </div>
+          <button type="button" data-pref-key="matchingOpportunities" class="w-12 h-7 rounded-full bg-white relative shrink-0"></button>
+        </div>
+
+        <div class="flex items-center justify-between gap-4 rounded-2xl bg-white/5 border border-white/10 p-4">
+          <div>
+            <p class="font-medium">Application updates</p>
+            <p class="text-sm text-white/50">Applied status, replies, and invitations</p>
+          </div>
+          <button type="button" data-pref-key="applicationUpdates" class="w-12 h-7 rounded-full bg-white relative shrink-0"></button>
+        </div>
+
+        <div class="flex items-center justify-between gap-4 rounded-2xl bg-white/5 border border-white/10 p-4">
+          <div>
+            <p class="font-medium">Comments and mentions</p>
+            <p class="text-sm text-white/50">Replies and conversation activity</p>
+          </div>
+          <button type="button" data-pref-key="commentsMentions" class="w-12 h-7 rounded-full bg-white relative shrink-0"></button>
+        </div>
+
+        <div class="flex items-center justify-between gap-4 rounded-2xl bg-white/5 border border-white/10 p-4">
+          <div>
+            <p class="font-medium">Product updates</p>
+            <p class="text-sm text-white/50">News, tips, and feature announcements</p>
+          </div>
+          <button type="button" data-pref-key="productUpdates" class="w-12 h-7 rounded-full bg-white/15 relative shrink-0"></button>
+        </div>
+      </section>
+
+      <section class="rounded-3xl bg-white/5 border border-white/10 p-4 space-y-3">
+        <div>
+          <h2 class="font-semibold">App preferences</h2>
+          <p class="text-sm text-white/50 mt-1">Control how the app behaves on your device.</p>
+        </div>
+
+        <div class="flex items-center justify-between gap-4 rounded-2xl bg-white/5 border border-white/10 p-4">
+          <div>
+            <p class="font-medium">Feed video sound</p>
+            <p class="text-sm text-white/50" data-app-pref-label="feedSound">On by default</p>
+          </div>
+          <button type="button" data-app-pref="feedSound" class="w-12 h-7 rounded-full bg-white relative shrink-0"></button>
+        </div>
+      </section>
+
+      <section class="rounded-3xl bg-white/5 border border-white/10 p-4 space-y-3">
+        <div>
+          <h2 class="font-semibold">Quick actions</h2>
+          <p class="text-sm text-white/50 mt-1">Jump to the places you manage most.</p>
+        </div>
+
+        <a id="settingsDashboardLink" href="creator-dashboard.html" class="flex items-center justify-between rounded-2xl bg-white/5 border border-white/10 px-4 py-4">
+          <div>
+            <p class="font-medium">Creator dashboard</p>
+            <p class="text-sm text-white/50 mt-1">Review your posts and stats</p>
+          </div>
+          <span class="material-symbols-outlined">chevron_right</span>
+        </a>
+
+        <a id="settingsModerationLink" href="admin-moderation.html" class="hidden flex items-center justify-between rounded-2xl bg-white/5 border border-white/10 px-4 py-4">
+          <div>
+            <p class="font-medium">Admin moderation</p>
+            <p class="text-sm text-white/50 mt-1">Approve pending posts and manage admins</p>
+          </div>
+          <span class="material-symbols-outlined">chevron_right</span>
+        </a>
+
+        <a href="notifications.html" class="flex items-center justify-between rounded-2xl bg-white/5 border border-white/10 px-4 py-4">
+          <div>
+            <p class="font-medium">Inbox</p>
+            <p class="text-sm text-white/50 mt-1">Open notifications and updates</p>
+          </div>
+          <span class="material-symbols-outlined">chevron_right</span>
+        </a>
+
+        <button id="settingsSignOut" type="button" class="w-full h-12 rounded-2xl bg-white/10 text-white border border-white/10 font-semibold">
+          Sign out
+        </button>
+      </section>
+    </div>
+  </div>
+  <script type="module" src="scripts/app.js"></script>
+</body>
+</html>
