@@ -69,6 +69,35 @@ body.app-loading {
   bottom: calc(7.75rem + var(--safe-area-bottom)) !important;
 }
 
+.comment-thread--reply {
+  margin-left: 0.375rem;
+  padding-left: 0.625rem;
+  border-left: 1px solid rgba(148, 163, 184, 0.12);
+}
+
+.comment-thread__row {
+  gap: 0.75rem;
+}
+
+.comment-thread__row--reply {
+  gap: 0.625rem;
+}
+
+.comment-thread__avatar {
+  width: 2.5rem;
+  height: 2.5rem;
+}
+
+.comment-thread__avatar--reply {
+  width: 2.125rem;
+  height: 2.125rem;
+}
+
+.comment-thread__actions {
+  column-gap: 0.875rem;
+  row-gap: 0.4rem;
+}
+
 @media (min-width: 768px) {
   .phone {
     border: 1px solid var(--border-subtle);

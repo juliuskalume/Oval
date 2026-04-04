@@ -1427,6 +1427,9 @@ function renderCommentThread(comment, repliesByParent, opportunity, user, profil
   const edited = commentWasEdited(comment);
   const expanded = expandedReplyIds.has(comment.id);
   const canManage = canManageComment(comment, user, profile, opportunity) && !deleted;
+  const threadClass = depth ? "comment-thread comment-thread--reply" : "comment-thread";
+  const rowClass = depth ? "comment-thread__row comment-thread__row--reply" : "comment-thread__row";
+  const avatarClass = depth ? "comment-thread__avatar comment-thread__avatar--reply" : "comment-thread__avatar";
   const badges = [];
   if (isOpportunityPoster(opportunity, comment)) {
     badges.push('<span class="text-[10px] px-2 py-1 rounded-full bg-white text-black">Poster</span>');
@@ -1436,9 +1439,9 @@ function renderCommentThread(comment, repliesByParent, opportunity, user, profil
   }
 
   return `
-    <article class="${depth ? "ml-4 pl-4 border-l border-white/10" : ""}">
-      <div class="flex gap-3">
-        <img src="${escapeHtml(comment.authorPhotoURL || DEFAULT_AVATAR)}" class="w-10 h-10 rounded-full object-cover" alt="${escapeHtml(comment.authorName || "Comment author")}">
+    <article class="${threadClass}">
+      <div class="flex ${rowClass}">
+        <img src="${escapeHtml(comment.authorPhotoURL || DEFAULT_AVATAR)}" class="${avatarClass} rounded-full object-cover shrink-0" alt="${escapeHtml(comment.authorName || "Comment author")}">
         <div class="flex-1 min-w-0">
           <div class="flex items-center gap-2 flex-wrap">
             <p class="text-sm font-semibold text-white/90">${escapeHtml(comment.authorName || "Oval User")}</p>
@@ -1449,7 +1452,7 @@ function renderCommentThread(comment, repliesByParent, opportunity, user, profil
           </div>
           <p class="text-sm ${deleted ? "italic text-white/40" : "text-white/80"} mt-2 leading-6 break-words">${deleted ? "Comment deleted." : renderMultilineText(comment.body)}</p>
           ${(replies.length || canReply || canManage) ? `
-            <div class="mt-3 flex items-center gap-4 flex-wrap text-xs text-white/50">
+            <div class="comment-thread__actions mt-3 flex items-center flex-wrap text-xs text-white/50">
               ${replies.length ? `
                 <button type="button" class="inline-flex items-center gap-1 hover:text-white transition" data-toggle-replies="${escapeHtml(comment.id)}">
                   <span class="material-symbols-outlined text-[14px] leading-none">${expanded ? "expand_more" : "chevron_right"}</span>
@@ -1466,7 +1469,7 @@ function renderCommentThread(comment, repliesByParent, opportunity, user, profil
             </div>
           ` : ""}
           ${replies.length && expanded ? `
-            <div class="mt-4 space-y-4">
+            <div class="mt-3 space-y-3">
               ${replies.map((reply) => renderCommentThread(reply, repliesByParent, opportunity, user, profile, canReply, expandedReplyIds, depth + 1)).join("")}
             </div>
           ` : ""}
