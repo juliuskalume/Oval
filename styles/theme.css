@@ -73,17 +73,6 @@ body.app-loading {
   min-width: 0;
 }
 
-.comment-thread--reply {
-  margin-left: 0.15rem;
-  padding-left: 0.45rem;
-  border-left: 1px solid rgba(148, 163, 184, 0.12);
-}
-
-.comment-thread--reply-compact {
-  margin-left: 0.05rem;
-  padding-left: 0.3rem;
-}
-
 .comment-thread__row {
   gap: 0.75rem;
   min-width: 0;
@@ -116,6 +105,23 @@ body.app-loading {
 .comment-thread__content {
   min-width: 0;
   flex: 1 1 0%;
+}
+
+.comment-thread__replies {
+  margin-top: 0.55rem;
+  margin-left: 0.45rem;
+  padding-left: 0.45rem;
+  border-left: 1px solid rgba(148, 163, 184, 0.1);
+  min-width: 0;
+}
+
+.comment-thread__replies--compact {
+  margin-left: 0.25rem;
+  padding-left: 0.25rem;
+}
+
+.comment-thread__replies > .comment-thread + .comment-thread {
+  margin-top: 0.55rem;
 }
 
 .comment-thread__meta {
@@ -151,6 +157,7 @@ body.app-loading {
 .comment-thread__actions {
   column-gap: 0.75rem;
   row-gap: 0.4rem;
+  min-width: 0;
 }
 
 .comment-thread__actions--compact {

@@ -1769,26 +1769,26 @@ function renderCommentThread(comment, repliesByParent, opportunity, user, profil
   const edited = commentWasEdited(comment);
   const expanded = expandedReplyIds.has(comment.id);
   const canManage = canManageComment(comment, user, profile, opportunity) && !deleted;
-  const compactThread = depth >= 2;
-  const threadClass = depth
-    ? `comment-thread comment-thread--reply${compactThread ? " comment-thread--reply-compact" : ""}`
-    : "comment-thread";
-  const rowClass = depth
-    ? `comment-thread__row comment-thread__row--reply${compactThread ? " comment-thread__row--compact" : ""}`
+  const compactThread = depth >= 1;
+  const deepThread = depth >= 3;
+  const threadClass = "comment-thread";
+  const rowClass = compactThread
+    ? `comment-thread__row comment-thread__row--reply${deepThread ? " comment-thread__row--compact" : ""}`
     : "comment-thread__row";
-  const avatarClass = depth
-    ? `comment-thread__avatar comment-thread__avatar--reply${compactThread ? " comment-thread__avatar--compact" : ""}`
+  const avatarClass = compactThread
+    ? `comment-thread__avatar comment-thread__avatar--reply${deepThread ? " comment-thread__avatar--compact" : ""}`
     : "comment-thread__avatar";
   const metaClass = compactThread
-    ? "comment-thread__meta comment-thread__meta--compact"
+    ? `comment-thread__meta${deepThread ? " comment-thread__meta--compact" : ""}`
     : "comment-thread__meta";
   const actionsClass = compactThread
-    ? "comment-thread__actions comment-thread__actions--compact mt-3 flex items-center flex-wrap text-xs text-white/50"
+    ? `comment-thread__actions mt-3 flex items-center flex-wrap text-xs text-white/50${deepThread ? " comment-thread__actions--compact" : ""}`
     : "comment-thread__actions mt-3 flex items-center flex-wrap text-xs text-white/50";
-  const repliesClass = compactThread ? "mt-2 space-y-2" : "mt-3 space-y-3";
+  const repliesClass = compactThread
+    ? `comment-thread__replies${deepThread ? " comment-thread__replies--compact" : ""}`
+    : "comment-thread__replies";
   const authorHref = comment.authorUid ? profileUrl(comment.authorUid) : "";
-  const authorName = escapeHtml(comment.authorName || "Oval User");
-  const authorHandle = comment.authorHandle ? escapeHtml(comment.authorHandle) : "";
+  const authorHandle = escapeHtml(comment.authorHandle || `@${slugify(comment.authorName || "oval-user")}`);
   const badges = [];
   if (isOpportunityPoster(opportunity, comment)) {
     badges.push('<span class="text-[10px] px-2 py-1 rounded-full bg-white text-black">Poster</span>');
@@ -1806,9 +1806,8 @@ function renderCommentThread(comment, repliesByParent, opportunity, user, profil
         <div class="comment-thread__content flex-1 min-w-0">
           <div class="${metaClass}">
             ${authorHref
-    ? `<a href="${authorHref}" class="comment-thread__name text-sm font-semibold text-white/90 hover:text-white transition">${authorName}</a>`
-    : `<p class="comment-thread__name text-sm font-semibold text-white/90">${authorName}</p>`}
-            ${authorHandle ? `<span class="comment-thread__handle text-xs text-white/45">${authorHandle}</span>` : ""}
+    ? `<a href="${authorHref}" class="comment-thread__name text-sm font-semibold text-white/90 hover:text-white transition">${authorHandle}</a>`
+    : `<p class="comment-thread__name text-sm font-semibold text-white/90">${authorHandle}</p>`}
             ${badges.join("")}
             <span class="comment-thread__timestamp text-xs text-white/40">${escapeHtml(formatRelativeDate(comment.createdAt) || "just now")}</span>
             ${edited ? '<span class="text-[11px] text-white/35 whitespace-nowrap">edited</span>' : ""}
@@ -1823,7 +1822,7 @@ function renderCommentThread(comment, repliesByParent, opportunity, user, profil
                 </button>
               ` : ""}
               ${canReply && !deleted ? `
-                <button type="button" class="hover:text-white transition" data-reply-id="${escapeHtml(comment.id)}" data-reply-name="${escapeHtml(comment.authorName || comment.authorHandle || "this user")}">Reply</button>
+                <button type="button" class="hover:text-white transition" data-reply-id="${escapeHtml(comment.id)}" data-reply-name="${authorHandle}">Reply</button>
               ` : ""}
               ${canManage ? `
                 <button type="button" class="hover:text-white transition" data-edit-comment="${escapeHtml(comment.id)}">Edit</button>
@@ -1831,13 +1830,13 @@ function renderCommentThread(comment, repliesByParent, opportunity, user, profil
               ` : ""}
             </div>
           ` : ""}
-          ${replies.length && expanded ? `
-            <div class="${repliesClass}">
-              ${replies.map((reply) => renderCommentThread(reply, repliesByParent, opportunity, user, profile, canReply, expandedReplyIds, depth + 1)).join("")}
-            </div>
-          ` : ""}
         </div>
       </div>
+      ${replies.length && expanded ? `
+        <div class="${repliesClass}">
+          ${replies.map((reply) => renderCommentThread(reply, repliesByParent, opportunity, user, profile, canReply, expandedReplyIds, depth + 1)).join("")}
+        </div>
+      ` : ""}
     </article>
   `;
 }
