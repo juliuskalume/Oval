@@ -13,6 +13,7 @@ import android.view.View
 import android.view.ViewGroup
 import android.view.ViewConfiguration
 import android.webkit.CookieManager
+import android.webkit.JavascriptInterface
 import android.webkit.ValueCallback
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceError
@@ -29,9 +30,15 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.browser.customtabs.CustomTabsIntent
 import androidx.core.view.isVisible
 import androidx.swiperefreshlayout.widget.SwipeRefreshLayout
+import com.google.android.gms.auth.api.signin.GoogleSignIn
+import com.google.android.gms.auth.api.signin.GoogleSignInAccount
+import com.google.android.gms.auth.api.signin.GoogleSignInClient
+import com.google.android.gms.auth.api.signin.GoogleSignInOptions
+import com.google.android.gms.common.api.ApiException
 import com.google.android.material.button.MaterialButton
 import com.google.android.material.progressindicator.LinearProgressIndicator
 import com.google.android.material.snackbar.Snackbar
+import org.json.JSONObject
 
 class MainActivity : AppCompatActivity() {
 
@@ -61,6 +68,7 @@ class MainActivity : AppCompatActivity() {
   private lateinit var popupContainer: View
   private lateinit var popupContent: FrameLayout
   private lateinit var popupCloseButton: ImageButton
+  private lateinit var googleSignInClient: GoogleSignInClient
 
   private var popupWebView: WebView? = null
   private var pendingFileChooser: ValueCallback<Array<Uri>>? = null
@@ -81,6 +89,23 @@ class MainActivity : AppCompatActivity() {
 
     val uris = WebChromeClient.FileChooserParams.parseResult(result.resultCode, result.data)
     callback.onReceiveValue(if (result.resultCode == Activity.RESULT_OK) uris else null)
+  }
+
+  private val googleSignInLauncher = registerForActivityResult(
+    ActivityResultContracts.StartActivityForResult(),
+  ) { result ->
+    try {
+      val task = GoogleSignIn.getSignedInAccountFromIntent(result.data)
+      val account = task.getResult(ApiException::class.java)
+      handleNativeGoogleSignInSuccess(account)
+    } catch (error: Exception) {
+      val message = if (result.resultCode == Activity.RESULT_CANCELED) {
+        "Google sign-in was cancelled."
+      } else {
+        error.message ?: "Google sign-in failed."
+      }
+      deliverNativeGoogleError(message)
+    }
   }
 
   private val backCallback = object : OnBackPressedCallback(true) {
@@ -111,6 +136,13 @@ class MainActivity : AppCompatActivity() {
     popupCloseButton = findViewById(R.id.popupCloseButton)
     touchSlopPx = ViewConfiguration.get(this).scaledTouchSlop
     refreshTopZonePx = dpToPx(refreshTopZoneDp)
+    googleSignInClient = GoogleSignIn.getClient(
+      this,
+      GoogleSignInOptions.Builder(GoogleSignInOptions.DEFAULT_SIGN_IN)
+        .requestEmail()
+        .requestIdToken(getString(R.string.default_web_client_id))
+        .build(),
+    )
 
     WebView.setWebContentsDebuggingEnabled(BuildConfig.DEBUG)
     configureWebView(mainWebView, isPopup = false)
@@ -129,7 +161,7 @@ class MainActivity : AppCompatActivity() {
       swipeRefresh.isEnabled = false
       currentWebView()?.reload()
     }
-    swipeRefresh.setOnTouchListener { _, event ->
+    mainWebView.setOnTouchListener { _, event ->
       handleRefreshTouch(event)
       false
     }
@@ -247,6 +279,9 @@ class MainActivity : AppCompatActivity() {
 
     webView.webViewClient = OvalWebViewClient(isPopup)
     webView.webChromeClient = OvalWebChromeClient(isPopup)
+    if (!isPopup) {
+      webView.addJavascriptInterface(NativeBridge(), "OvalAndroid")
+    }
     webView.setDownloadListener { url, _, _, _, _ ->
       openExternalUrl(Uri.parse(url))
     }
@@ -344,6 +379,52 @@ class MainActivity : AppCompatActivity() {
         if (!swipeRefresh.isRefreshing) {
           resetRefreshGesture()
         }
+      }
+    }
+  }
+
+  private fun quoteJs(value: String): String {
+    return JSONObject.quote(value)
+  }
+
+  private fun evaluateOnMainWebView(script: String) {
+    mainWebView.post {
+      mainWebView.evaluateJavascript(script, null)
+    }
+  }
+
+  private fun launchNativeGoogleSignIn() {
+    try {
+      googleSignInClient.signOut().addOnCompleteListener {
+        googleSignInLauncher.launch(googleSignInClient.signInIntent)
+      }
+    } catch (_: Exception) {
+      googleSignInLauncher.launch(googleSignInClient.signInIntent)
+    }
+  }
+
+  private fun handleNativeGoogleSignInSuccess(account: GoogleSignInAccount?) {
+    val idToken = account?.idToken
+    if (idToken.isNullOrBlank()) {
+      deliverNativeGoogleError("Google sign-in did not return an ID token.")
+      return
+    }
+    evaluateOnMainWebView(
+      "window.ovalNativeGoogleComplete && window.ovalNativeGoogleComplete(${quoteJs(idToken)});",
+    )
+  }
+
+  private fun deliverNativeGoogleError(message: String) {
+    evaluateOnMainWebView(
+      "window.ovalNativeGoogleError && window.ovalNativeGoogleError(${quoteJs(message)});",
+    )
+  }
+
+  private inner class NativeBridge {
+    @JavascriptInterface
+    fun startGoogleSignIn() {
+      runOnUiThread {
+        launchNativeGoogleSignIn()
       }
     }
   }

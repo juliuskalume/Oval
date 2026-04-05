@@ -1,0 +1,47 @@
+{
+  "project_info": {
+    "project_number": "1081321199371",
+    "project_id": "oval-by-sentirax",
+    "storage_bucket": "oval-by-sentirax.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:1081321199371:android:d3774db6ef305266cdf40e",
+        "android_client_info": {
+          "package_name": "com.sentirax.oval"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "1081321199371-sdobml6pdq7u5un43vu7idt996l2qgo2.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.sentirax.oval",
+            "certificate_hash": "c27a915d3f88124b9e61da440f732caeb9056d11"
+          }
+        },
+        {
+          "client_id": "1081321199371-bq1991is6krj16qjb0hnsvah423pthn3.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBcVc3jVbWI47nz-4FkmLrrhYHbbQOt0Gg"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "1081321199371-bq1991is6krj16qjb0hnsvah423pthn3.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

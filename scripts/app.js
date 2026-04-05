@@ -1,4 +1,5 @@
 import {
+  GoogleAuthProvider,
   Timestamp,
   addDoc,
   auth,
@@ -16,6 +17,7 @@ import {
   runTransaction,
   setDoc,
   signInWithEmailAndPassword,
+  signInWithCredential,
   signInWithPopup,
   signOut,
   storage,
@@ -1651,6 +1653,58 @@ function redirectAfterAuth(profile) {
   location.href = target;
 }
 
+function nativeGoogleBridgeAvailable() {
+  return typeof window !== "undefined"
+    && typeof window.OvalAndroid?.startGoogleSignIn === "function";
+}
+
+async function completeNativeGoogleSignIn(idToken) {
+  const button = qs("#googleContinue");
+  const status = qs("#googleStatus");
+  if (!idToken) {
+    throw new Error("Missing Google sign-in token.");
+  }
+  if (button) {
+    button.disabled = true;
+  }
+  setStatus(status, "");
+  try {
+    const credential = await signInWithCredential(auth, GoogleAuthProvider.credential(idToken));
+    const nextProfile = await ensureUserProfile(credential.user);
+    redirectAfterAuth(nextProfile);
+  } catch (error) {
+    console.error(error);
+    setStatus(status, error.message || "Google sign-in failed.", "error");
+  } finally {
+    if (button) {
+      button.disabled = false;
+    }
+  }
+}
+
+function failNativeGoogleSignIn(message) {
+  const button = qs("#googleContinue");
+  const status = qs("#googleStatus");
+  console.error(message || "Native Google sign-in failed.");
+  setStatus(status, message || "Google sign-in failed.", "error");
+  if (button) {
+    button.disabled = false;
+  }
+}
+
+function installNativeGoogleBridge() {
+  if (typeof window === "undefined" || window.__ovalNativeGoogleBridgeInstalled) {
+    return;
+  }
+  window.__ovalNativeGoogleBridgeInstalled = true;
+  window.ovalNativeGoogleComplete = (idToken) => {
+    completeNativeGoogleSignIn(idToken);
+  };
+  window.ovalNativeGoogleError = (message) => {
+    failNativeGoogleSignIn(message);
+  };
+}
+
 function applySkipLinks(root = document) {
   const allowedPublicPages = new Set(["feed.html", "details.html", "search.html"]);
   const requestedTarget = getPendingReturnTo("feed.html");
@@ -1787,7 +1841,13 @@ function bindGoogleAuth() {
   button.addEventListener("click", async () => {
     button.disabled = true;
     setStatus(status, "");
+    let nativeHandled = false;
     try {
+      if (nativeGoogleBridgeAvailable()) {
+        nativeHandled = true;
+        window.OvalAndroid.startGoogleSignIn();
+        return;
+      }
       const credential = await signInWithPopup(auth, googleProvider);
       const nextProfile = await ensureUserProfile(credential.user);
       redirectAfterAuth(nextProfile);
@@ -1795,7 +1855,9 @@ function bindGoogleAuth() {
       console.error(error);
       setStatus(status, error.message || "Google sign-in failed.", "error");
     } finally {
-      button.disabled = false;
+      if (!nativeHandled) {
+        button.disabled = false;
+      }
     }
   });
 }
@@ -4338,6 +4400,7 @@ async function initSettings(user, profile) {
 async function main() {
   const user = await withTimeout(authReady, 1500).catch(() => null);
   let profile = null;
+  installNativeGoogleBridge();
   if (user) {
     const cachedProfile = readCachedProfile(user.uid);
     try {

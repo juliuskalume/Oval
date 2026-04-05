@@ -6,6 +6,7 @@ import {
   getAuth,
   onAuthStateChanged,
   signInWithEmailAndPassword,
+  signInWithCredential,
   signInWithPopup,
   signOut,
   updateProfile,
@@ -60,6 +61,7 @@ isSupported()
 
 export {
   Timestamp,
+  GoogleAuthProvider,
   addDoc,
   app,
   auth,
@@ -80,6 +82,7 @@ export {
   serverTimestamp,
   setDoc,
   signInWithEmailAndPassword,
+  signInWithCredential,
   signInWithPopup,
   signOut,
   storage,
