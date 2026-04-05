@@ -43,7 +43,7 @@ const FEED_VIDEO_SOUND_KEY = "oval.feedVideoSoundEnabled";
 const FEED_CACHE_KEY = "oval.feed.publicOpportunities.v1";
 const SETTINGS_PREFS_KEY = "oval.settings.preferences";
 const PROFILE_CACHE_PREFIX = "oval.profile.";
-const APP_LOADER_MIN_MS = 420;
+const APP_LOADER_MIN_MS = 220;
 const TAP_HAPTIC_SELECTOR = [
   'a[href]',
   'button',
@@ -58,6 +58,15 @@ const TAP_HAPTIC_SELECTOR = [
   'summary',
 ].join(", ");
 const PWA_THEME_COLOR = "#020617";
+const NON_BLOCKING_PROFILE_PAGES = new Set([
+  "index",
+  "onboarding",
+  "sign-in-email",
+  "feed",
+  "details",
+  "comments",
+  "search",
+]);
 const DEFAULT_COVER =
   "https://images.unsplash.com/photo-1521737604893-d14cc237f11d?auto=format&fit=crop&w=1200&q=80";
 const DEFAULT_AVATAR =
@@ -522,7 +531,11 @@ function warmFeedMediaCache(opportunities = []) {
     return;
   }
 
-  window.setTimeout(() => {
+  const scheduleWarmup = typeof window.requestIdleCallback === "function"
+    ? (callback) => window.requestIdleCallback(callback, { timeout: 1200 })
+    : (callback) => window.setTimeout(callback, 220);
+
+  scheduleWarmup(() => {
     mediaUrls.forEach((url, index) => {
       window.setTimeout(() => {
         try {
@@ -534,7 +547,7 @@ function warmFeedMediaCache(opportunities = []) {
         } catch (error) {}
       }, index * 180);
     });
-  }, 0);
+  });
 }
 
 function formatDate(value) {
@@ -829,7 +842,7 @@ function mediaElementMarkup({ url, kind, alt = "", className = "", autoplay = fa
       .join(" ");
     return `<video src="${safeUrl}" class="${safeClassName}" ${attributes} aria-label="${safeAlt}"></video>`;
   }
-  return `<img src="${safeUrl}" class="${safeClassName}" alt="${safeAlt}">`;
+  return `<img src="${safeUrl}" class="${safeClassName}" alt="${safeAlt}" loading="lazy" decoding="async">`;
 }
 
 function renderOpportunityMedia(opportunity, className, options = {}) {
@@ -912,7 +925,7 @@ function opportunitySnapshot(opportunity) {
   };
 }
 
-async function ensureDemoData() {
+function ensureDemoData() {
   return DEMO_OPPORTUNITIES.map((item) => ({
     ...item,
     seeded: true,
@@ -2365,6 +2378,15 @@ function syncFeedVideoAudioButton(section, muted) {
   paintVideoAudioButton(qs("[data-video-audio-button]", section), muted);
 }
 
+function paintFeedOpportunityState(container, opportunity, state = {}) {
+  opportunityActionButtons(container, "toggle-save", opportunity.id).forEach((button) => {
+    paintSaveActionButton(button, Boolean(state.saved));
+  });
+  opportunityActionButtons(container, "toggle-like", opportunity.id).forEach((button) => {
+    paintLikeActionButton(button, Boolean(state.liked), opportunity.likesCount);
+  });
+}
+
 function muteOtherFeedVideos(container, activeVideo) {
   qsa("video", container).forEach((video) => {
     if (video === activeVideo) {
@@ -2613,17 +2635,13 @@ async function bindOpportunityActionButtons(container, opportunities, states, us
 
 async function initFeed(user) {
   const cachedOpportunities = readCachedPublicOpportunities();
-  let opportunities = cachedOpportunities.length
-    ? cachedOpportunities
-    : await loadPublicOpportunities();
-  const [states, initialFollowingIds] = await Promise.all([
-    refreshStates(user),
-    user ? loadFollowingIds(user.uid) : Promise.resolve(new Set()),
-  ]);
+  let opportunities = cachedOpportunities.length ? cachedOpportunities : [];
+  const states = new Map();
   const slides = qs("#feedSlides");
   const status = qs("#feedStatus");
   const modeButtons = qsa("[data-feed-mode]");
-  let followingIds = initialFollowingIds;
+  let followingIds = new Set();
+  let followingIdsReady = !user;
   let activeMode = "for-you";
   let activeOpportunities = opportunities;
 
@@ -2746,7 +2764,8 @@ async function initFeed(user) {
     `;
   }
 
-  function rebuildFeed() {
+  function rebuildFeed(options = {}) {
+    const loading = options.loading === true;
     Array.from(slides.children).forEach((section) => observer.unobserve(section));
     slides.innerHTML = "";
     renderedCount = 0;
@@ -2755,7 +2774,11 @@ async function initFeed(user) {
     setStatus(status, "");
 
     if (!opportunities.length) {
-      renderFeedEmpty("New submissions will appear here after admin approval.");
+      renderFeedEmpty(
+        loading
+          ? "Loading live posts..."
+          : "New submissions will appear here after admin approval.",
+      );
       return;
     }
     if (!activeOpportunities.length) {
@@ -2773,6 +2796,20 @@ async function initFeed(user) {
     ensureFeedBuffer();
   }
 
+  function hydrateFeedStates(nextStates) {
+    states.clear();
+    nextStates.forEach((value, key) => {
+      states.set(key, value);
+    });
+    qsa("[data-opportunity-id]", slides).forEach((section) => {
+      const opportunity = opportunities.find((item) => item.id === section.dataset.opportunityId);
+      if (!opportunity) {
+        return;
+      }
+      paintFeedOpportunityState(slides, opportunity, states.get(opportunity.id) || {});
+    });
+  }
+
   await bindOpportunityActionButtons(slides, () => opportunities, states, user, status);
 
   modeButtons.forEach((button) => {
@@ -2785,8 +2822,10 @@ async function initFeed(user) {
         setStatus(status, "Sign in to see posts from accounts you follow.", "info");
         return;
       }
-      if (nextMode === "following") {
+      if (nextMode === "following" && !followingIdsReady) {
+        setStatus(status, "Loading followed accounts...", "info");
         followingIds = await loadFollowingIds(user.uid);
+        followingIdsReady = true;
       }
       activeMode = nextMode;
       rebuildFeed();
@@ -2822,9 +2861,10 @@ async function initFeed(user) {
   });
   slides.addEventListener("scroll", maybeAppendMore, { passive: true });
   paintModeButtons();
-  rebuildFeed();
+  rebuildFeed({ loading: !opportunities.length });
 
   if (cachedOpportunities.length) {
+    warmFeedMediaCache(cachedOpportunities);
     setStatus(
       status,
       navigator.onLine
@@ -2832,25 +2872,48 @@ async function initFeed(user) {
         : "Showing saved posts while you are offline.",
       "info",
     );
-    const initialSignature = opportunityListSignature(cachedOpportunities);
-    loadPublicOpportunities()
-      .then((freshOpportunities) => {
-        warmFeedMediaCache(freshOpportunities.length ? freshOpportunities : cachedOpportunities);
-        const nextSignature = opportunityListSignature(freshOpportunities);
-        opportunities = freshOpportunities;
-        if (nextSignature !== initialSignature) {
-          rebuildFeed();
-        }
-        setStatus(status, navigator.onLine ? "" : "Showing saved posts while you are offline.");
-      })
-      .catch(() => {
-        warmFeedMediaCache(cachedOpportunities);
-        setStatus(status, "Showing saved posts while you are offline.", "info");
-      });
-    return;
+  } else if (navigator.onLine) {
+    setStatus(status, "Loading latest posts...", "info");
+  } else {
+    setStatus(status, "No connection. Loading any available posts.", "info");
   }
 
-  warmFeedMediaCache(opportunities);
+  if (user?.uid) {
+    Promise.all([refreshStates(user), loadFollowingIds(user.uid)])
+      .then(([nextStates, nextFollowingIds]) => {
+        hydrateFeedStates(nextStates);
+        followingIds = nextFollowingIds;
+        followingIdsReady = true;
+        if (activeMode === "following") {
+          rebuildFeed();
+        }
+      })
+      .catch((error) => {
+        console.warn("Feed state hydration failed.", error);
+      });
+  }
+
+  const initialSignature = opportunityListSignature(opportunities);
+  loadPublicOpportunities()
+    .then((freshOpportunities) => {
+      opportunities = freshOpportunities;
+      warmFeedMediaCache(freshOpportunities.length ? freshOpportunities : cachedOpportunities);
+      const nextSignature = opportunityListSignature(freshOpportunities);
+      if (!cachedOpportunities.length || nextSignature !== initialSignature) {
+        rebuildFeed();
+      }
+      setStatus(
+        status,
+        navigator.onLine ? "" : "Showing saved posts while you are offline.",
+      );
+    })
+    .catch((error) => {
+      console.warn("Feed refresh failed.", error);
+      if (!cachedOpportunities.length) {
+        rebuildFeed();
+      }
+      setStatus(status, "Showing saved posts while you are offline.", "info");
+    });
 }
 
 async function initDetails(user, profile) {
@@ -4563,24 +4626,35 @@ async function initSettings(user, profile) {
 
 async function main() {
   const user = await withTimeout(authReady, 1500).catch(() => null);
-  let profile = null;
   installTouchHaptics();
   installNativeGoogleBridge();
+  const cachedProfile = user ? readCachedProfile(user.uid) : null;
+  let profile = user ? fallbackProfileFromUser(user, cachedProfile) : null;
+  let profileRefreshPromise = Promise.resolve(profile);
   if (user) {
-    const cachedProfile = readCachedProfile(user.uid);
-    try {
-      profile = await ensureUserProfile(user);
-      writeCachedProfile(user.uid, profile);
-    } catch (error) {
-      console.warn("Profile bootstrap failed, using cached profile.", error);
-      profile = fallbackProfileFromUser(user, cachedProfile);
-      writeCachedProfile(user.uid, profile);
+    profileRefreshPromise = ensureUserProfile(user)
+      .then((freshProfile) => {
+        profile = freshProfile;
+        writeCachedProfile(user.uid, freshProfile);
+        applyNavForRole(freshProfile);
+        return freshProfile;
+      })
+      .catch((error) => {
+        console.warn("Profile bootstrap failed, using cached profile.", error);
+        profile = fallbackProfileFromUser(user, cachedProfile);
+        writeCachedProfile(user.uid, profile);
+        return profile;
+      });
+    if (!NON_BLOCKING_PROFILE_PAGES.has(page)) {
+      profile = await profileRefreshPromise;
     }
   }
 
   applyNavForRole(profile);
   if (page !== "inbox" && page !== "notifications") {
-    await refreshInboxNavIndicator(user);
+    refreshInboxNavIndicator(user).catch((error) => {
+      console.warn("Inbox indicator refresh failed.", error);
+    });
   }
 
   if (page === "index") {
