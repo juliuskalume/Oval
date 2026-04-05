@@ -37,7 +37,6 @@ import com.google.android.gms.auth.api.signin.GoogleSignInStatusCodes
 import com.google.android.gms.common.api.ApiException
 import com.google.android.gms.common.api.CommonStatusCodes
 import com.google.android.material.button.MaterialButton
-import com.google.android.material.progressindicator.LinearProgressIndicator
 import com.google.android.material.snackbar.Snackbar
 import org.json.JSONObject
 
@@ -59,7 +58,6 @@ class MainActivity : AppCompatActivity() {
 
   private lateinit var root: View
   private lateinit var swipeRefresh: SwipeRefreshLayout
-  private lateinit var progressBar: LinearProgressIndicator
   private lateinit var mainWebView: WebView
   private lateinit var offlineContainer: View
   private lateinit var offlineMessage: TextView
@@ -122,7 +120,6 @@ class MainActivity : AppCompatActivity() {
 
     root = findViewById(R.id.root)
     swipeRefresh = findViewById(R.id.swipeRefresh)
-    progressBar = findViewById(R.id.progressBar)
     mainWebView = findViewById(R.id.webView)
     offlineContainer = findViewById(R.id.offlineContainer)
     offlineMessage = findViewById(R.id.offlineMessage)
@@ -278,7 +275,6 @@ class MainActivity : AppCompatActivity() {
     offlineMessage.text = message
     offlineContainer.isVisible = true
     finishRefreshIndicator()
-    progressBar.hide()
   }
 
   private fun hideOfflineState() {
@@ -491,7 +487,6 @@ class MainActivity : AppCompatActivity() {
     override fun onPageStarted(view: WebView, url: String?, favicon: Bitmap?) {
       if (!isPopup) {
         hideOfflineState()
-        progressBar.show()
       }
       super.onPageStarted(view, url, favicon)
     }
@@ -499,9 +494,6 @@ class MainActivity : AppCompatActivity() {
     override fun onPageFinished(view: WebView, url: String?) {
       if (!isPopup) {
         finishRefreshIndicator()
-        if (progressBar.progress >= 100) {
-          progressBar.hide()
-        }
       }
 
       if (isPopup && !url.isNullOrBlank()) {
@@ -542,12 +534,8 @@ class MainActivity : AppCompatActivity() {
 
     override fun onProgressChanged(view: WebView, newProgress: Int) {
       if (!isPopup) {
-        progressBar.progress = newProgress
         if (newProgress >= 100) {
-          progressBar.hide()
           finishRefreshIndicator()
-        } else {
-          progressBar.show()
         }
       }
       super.onProgressChanged(view, newProgress)
