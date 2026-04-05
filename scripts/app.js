@@ -37,6 +37,8 @@ const MAX_COMMENT_LENGTH = 280;
 const FEED_CAPTION_LENGTH = 100;
 const FEED_BATCH_SIZE = 4;
 const FEED_CACHE_LIMIT = 10;
+const FEED_GESTURE_THRESHOLD = 48;
+const FEED_SCROLL_LOCK_MS = 420;
 const FEED_VIDEO_SOUND_KEY = "oval.feedVideoSoundEnabled";
 const FEED_CACHE_KEY = "oval.feed.publicOpportunities.v1";
 const SETTINGS_PREFS_KEY = "oval.settings.preferences";
@@ -2157,7 +2159,7 @@ function renderFeedSlide(opportunity, state = {}) {
   const creatorName = escapeHtml(opportunity.creatorName || "Oval Creator");
   const creatorLabel = escapeHtml(opportunity.creatorHandle || opportunity.creatorName || "Oval Creator");
   return `
-    <section class="relative min-h-screen snap-start" data-opportunity-id="${escapeHtml(opportunity.id)}">
+    <section class="feed-slide relative min-h-screen snap-start" data-opportunity-id="${escapeHtml(opportunity.id)}">
       <div class="absolute inset-0 pointer-events-none">
         ${renderOpportunityMedia(opportunity, "w-full h-full object-cover", { muted, loop: true, autoplay: true })}
         <div class="absolute inset-0 bg-gradient-to-t from-black/85 via-black/10 to-black/45"></div>
@@ -2408,6 +2410,13 @@ async function initFeed(user) {
   }
 
   let renderedCount = 0;
+  let pagingLocked = false;
+  let pagingUnlockTimer = 0;
+  let wheelIntent = 0;
+  let wheelResetTimer = 0;
+  let touchStartY = 0;
+  let touchStartX = 0;
+  let touchGestureEligible = false;
 
   function feedModeClass(mode) {
     return mode === activeMode
@@ -2429,6 +2438,81 @@ async function initFeed(user) {
       return [];
     }
     return opportunities.filter((item) => item.creatorUid && followingIds.has(item.creatorUid));
+  }
+
+  function feedSections() {
+    return Array.from(slides.children);
+  }
+
+  function nearestFeedIndex() {
+    const sections = feedSections();
+    if (!sections.length) {
+      return -1;
+    }
+    const viewportCenter = slides.scrollTop + (slides.clientHeight / 2);
+    let nearestIndex = 0;
+    let nearestDistance = Number.POSITIVE_INFINITY;
+    sections.forEach((section, index) => {
+      const sectionCenter = section.offsetTop + (section.offsetHeight / 2);
+      const distance = Math.abs(sectionCenter - viewportCenter);
+      if (distance < nearestDistance) {
+        nearestDistance = distance;
+        nearestIndex = index;
+      }
+    });
+    return nearestIndex;
+  }
+
+  function isFeedInteractiveTarget(target) {
+    return Boolean(target?.closest("a, button, input, textarea, select, label, [role='button']"));
+  }
+
+  function releaseFeedPagingLock(targetTop = null) {
+    window.clearTimeout(pagingUnlockTimer);
+    if (typeof targetTop === "number") {
+      slides.scrollTop = targetTop;
+    }
+    pagingLocked = false;
+  }
+
+  function startFeedPagingLock(targetTop) {
+    pagingLocked = true;
+    window.clearTimeout(pagingUnlockTimer);
+    pagingUnlockTimer = window.setTimeout(() => {
+      releaseFeedPagingLock(targetTop);
+    }, FEED_SCROLL_LOCK_MS);
+  }
+
+  function moveFeedBy(direction) {
+    if (!direction || pagingLocked) {
+      return false;
+    }
+    const currentIndex = nearestFeedIndex();
+    if (currentIndex < 0) {
+      return false;
+    }
+    let targetIndex = Math.max(0, currentIndex + direction);
+    let sections = feedSections();
+    let guard = 0;
+    while (targetIndex >= sections.length && guard < 4) {
+      if (!appendFeedBatch()) {
+        break;
+      }
+      sections = feedSections();
+      guard += 1;
+    }
+    targetIndex = Math.min(targetIndex, Math.max(sections.length - 1, 0));
+    const targetSection = sections[targetIndex];
+    if (!targetSection) {
+      return false;
+    }
+    const targetTop = targetSection.offsetTop;
+    startFeedPagingLock(targetTop);
+    slides.scrollTo({
+      top: targetTop,
+      behavior: "smooth",
+    });
+    return true;
   }
 
   const observer = new IntersectionObserver(
@@ -2521,6 +2605,9 @@ async function initFeed(user) {
   }
 
   function rebuildFeed() {
+    releaseFeedPagingLock();
+    wheelIntent = 0;
+    window.clearTimeout(wheelResetTimer);
     Array.from(slides.children).forEach((section) => observer.unobserve(section));
     slides.innerHTML = "";
     renderedCount = 0;
@@ -2565,6 +2652,76 @@ async function initFeed(user) {
       activeMode = nextMode;
       rebuildFeed();
     });
+  });
+
+  slides.addEventListener("wheel", (event) => {
+    if (!feedSections().length || isFeedInteractiveTarget(event.target)) {
+      return;
+    }
+    if (pagingLocked) {
+      event.preventDefault();
+      return;
+    }
+    wheelIntent += event.deltaY;
+    window.clearTimeout(wheelResetTimer);
+    wheelResetTimer = window.setTimeout(() => {
+      wheelIntent = 0;
+    }, 140);
+    event.preventDefault();
+    if (Math.abs(wheelIntent) < FEED_GESTURE_THRESHOLD / 2) {
+      return;
+    }
+    const direction = wheelIntent > 0 ? 1 : -1;
+    wheelIntent = 0;
+    moveFeedBy(direction);
+  }, { passive: false });
+
+  slides.addEventListener("touchstart", (event) => {
+    const touch = event.touches[0];
+    if (!touch) {
+      return;
+    }
+    touchStartY = touch.clientY;
+    touchStartX = touch.clientX;
+    touchGestureEligible = !isFeedInteractiveTarget(event.target);
+  }, { passive: true });
+
+  slides.addEventListener("touchmove", (event) => {
+    if (!touchGestureEligible || pagingLocked) {
+      return;
+    }
+    const touch = event.touches[0];
+    if (!touch) {
+      return;
+    }
+    const deltaY = touch.clientY - touchStartY;
+    const deltaX = touch.clientX - touchStartX;
+    if (Math.abs(deltaY) <= Math.abs(deltaX) || Math.abs(deltaY) < 8) {
+      return;
+    }
+    event.preventDefault();
+  }, { passive: false });
+
+  slides.addEventListener("touchend", (event) => {
+    if (!touchGestureEligible || pagingLocked) {
+      touchGestureEligible = false;
+      return;
+    }
+    const touch = event.changedTouches[0];
+    touchGestureEligible = false;
+    if (!touch) {
+      return;
+    }
+    const deltaY = touchStartY - touch.clientY;
+    const deltaX = touchStartX - touch.clientX;
+    if (Math.abs(deltaY) < FEED_GESTURE_THRESHOLD || Math.abs(deltaY) <= Math.abs(deltaX)) {
+      return;
+    }
+    moveFeedBy(deltaY > 0 ? 1 : -1);
+  });
+
+  slides.addEventListener("touchcancel", () => {
+    touchGestureEligible = false;
   });
 
   slides.addEventListener("click", async (event) => {
