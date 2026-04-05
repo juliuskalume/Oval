@@ -574,8 +574,13 @@ function detailsUrl(opportunityId) {
   return `details.html?id=${encodeURIComponent(opportunityId)}`;
 }
 
-function commentsUrl(opportunityId) {
-  return `comments.html?id=${encodeURIComponent(opportunityId)}`;
+function commentsUrl(opportunityId, commentId = "") {
+  const params = new URLSearchParams();
+  params.set("id", opportunityId);
+  if (commentId) {
+    params.set("commentId", commentId);
+  }
+  return `comments.html?${params.toString()}`;
 }
 
 function profileUrl(uid) {
@@ -588,6 +593,10 @@ function profileDisplayName(profile) {
 
 function profileHandleText(profile) {
   return profile?.username ? `@${profile.username}` : "";
+}
+
+function commentPreviewText(value, maxLength = 42) {
+  return truncateText(String(value || "").replace(/\s+/g, " ").trim(), maxLength);
 }
 
 function opportunityMedia(opportunity) {
@@ -1141,7 +1150,7 @@ function notificationDestination(item) {
     return "admin-moderation.html";
   }
   if ((item.type === "comment" || item.type === "comment-reply") && item.opportunityId) {
-    return commentsUrl(item.opportunityId);
+    return commentsUrl(item.opportunityId, item.commentId || "");
   }
   if (item.opportunityId) {
     return detailsUrl(item.opportunityId);
@@ -1172,6 +1181,20 @@ function notificationIcon(item) {
     return "inventory_2";
   }
   return "notifications";
+}
+
+function notificationFilterCategory(item) {
+  if (item?.type === "comment" || item?.type === "comment-reply") {
+    return "comments";
+  }
+  if (
+    item?.type === "application"
+    || item?.type === "moderation-approved"
+    || item?.type === "moderation-archived"
+  ) {
+    return "opportunities";
+  }
+  return "system";
 }
 
 function isOpportunityPoster(opportunity, comment) {
@@ -1319,6 +1342,8 @@ async function createOpportunityComment(opportunity, user, profile, body, parent
       title: "New comment on your post",
       body: `${profile.displayName || "Someone"} commented on ${opportunity.title}.`,
       opportunityId: opportunity.id,
+      commentId: nextComment.id,
+      commentPreview: commentPreviewText(nextComment.body),
     }).catch((error) => {
       console.warn("Creator comment notification failed.", error);
     });
@@ -1334,6 +1359,8 @@ async function createOpportunityComment(opportunity, user, profile, body, parent
       title: "New reply to your comment",
       body: `${profile.displayName || "Someone"} replied on ${opportunity.title}.`,
       opportunityId: opportunity.id,
+      commentId: nextComment.id,
+      commentPreview: commentPreviewText(nextComment.body),
     }).catch((error) => {
       console.warn("Reply notification failed.", error);
     });
@@ -1842,7 +1869,7 @@ function renderCommentThread(comment, repliesByParent, opportunity, user, profil
   }
 
   return `
-    <article class="${threadClass}">
+    <article class="${threadClass}" data-comment-id="${escapeHtml(comment.id)}">
       <div class="flex ${rowClass}">
         ${authorHref
     ? `<a href="${authorHref}" class="shrink-0"><img src="${escapeHtml(comment.authorPhotoURL || DEFAULT_AVATAR)}" class="${avatarClass} rounded-full object-cover shrink-0" alt="${escapeHtml(comment.authorName || "Comment author")}"></a>`
@@ -2566,7 +2593,9 @@ async function initDetails(user, profile) {
 }
 
 async function initComments(user, profile) {
-  const opportunityId = new URLSearchParams(location.search).get("id") || DEMO_OPPORTUNITIES[0].id;
+  const search = new URLSearchParams(location.search);
+  const opportunityId = search.get("id") || DEMO_OPPORTUNITIES[0].id;
+  const targetCommentId = search.get("commentId") || "";
   const opportunity = await loadOpportunity(opportunityId, { fallbackToFirstDemo: opportunityId.startsWith("demo-") });
   const shell = qs(".phone");
 
@@ -2603,6 +2632,7 @@ async function initComments(user, profile) {
   let replyTarget = null;
   let editTarget = null;
   const expandedReplyIds = new Set();
+  let targetCommentFocused = false;
 
   if (backLink) {
     const fallbackHref = detailsUrl(opportunity.id);
@@ -2767,6 +2797,10 @@ async function initComments(user, profile) {
     const rootComments = repliesByParent.get("__root__") || [];
     const canReply = opportunity.allowComments !== false && !opportunity.seeded;
 
+    if (targetCommentId) {
+      expandReplyLineage(targetCommentId, comments, expandedReplyIds);
+    }
+
     if (!rootComments.length) {
       list.innerHTML = `
         <div class="rounded-3xl bg-white/5 border border-white/10 p-6 text-sm text-white/60">
@@ -2783,6 +2817,23 @@ async function initComments(user, profile) {
 
     paintHeading();
     paintSummary();
+
+    if (targetCommentId && !targetCommentFocused) {
+      const targetNode = qs(`[data-comment-id="${String(targetCommentId).replace(/"/g, '\\"')}"]`, list);
+      if (targetNode) {
+        targetCommentFocused = true;
+        window.requestAnimationFrame(() => {
+          targetNode.classList.add("comment-thread--focused");
+          targetNode.scrollIntoView({
+            block: "center",
+            behavior: "smooth",
+          });
+          window.setTimeout(() => {
+            targetNode.classList.remove("comment-thread--focused");
+          }, 1800);
+        });
+      }
+    }
   }
 
   list?.addEventListener("click", (event) => {
@@ -3820,6 +3871,8 @@ async function initInbox(user, profile) {
   const items = await loadUserNotifications(user.uid);
   const unreadItems = items.filter((item) => item.read === false);
   const list = qs("#notificationsList");
+  const filterButtons = qsa("[data-inbox-filter]");
+  let activeFilter = "all";
   if (!list) {
     return;
   }
@@ -3841,14 +3894,38 @@ async function initInbox(user, profile) {
       '<div class="rounded-3xl bg-white/5 border border-white/10 p-6 text-sm text-white/60">No updates yet.</div>';
     return;
   }
-  list.innerHTML = items
-    .map((item) => {
+
+  function filterButtonClass(filter) {
+    return activeFilter === filter
+      ? "chip active-chip px-4 py-2 rounded-full whitespace-nowrap"
+      : "chip px-4 py-2 rounded-full whitespace-nowrap";
+  }
+
+  function filteredItems() {
+    if (activeFilter === "all") {
+      return items;
+    }
+    return items.filter((item) => notificationFilterCategory(item) === activeFilter);
+  }
+
+  function renderInboxItems() {
+    const visibleItems = filteredItems();
+    if (!visibleItems.length) {
+      list.innerHTML =
+        '<div class="rounded-3xl bg-white/5 border border-white/10 p-6 text-sm text-white/60">No updates match this filter.</div>';
+      return;
+    }
+    list.innerHTML = visibleItems
+      .map((item) => {
       const href = notificationDestination(item);
       const wrapperTag = href ? "a" : "div";
       const wrapperHref = href ? ` href="${escapeHtml(href)}"` : "";
       const wrapperClass = href
         ? "rounded-3xl bg-white/5 border border-white/10 p-4 block hover:border-white/20 hover:bg-white/[0.07] transition"
         : "rounded-3xl bg-white/5 border border-white/10 p-4";
+      const preview = (item.type === "comment" || item.type === "comment-reply") && item.commentPreview
+        ? `<p class="text-sm text-white/55 mt-2 truncate">"${escapeHtml(item.commentPreview)}"</p>`
+        : "";
       return `
         <${wrapperTag}${wrapperHref} class="${wrapperClass}">
           <div class="flex gap-3">
@@ -3861,6 +3938,7 @@ async function initInbox(user, profile) {
                 ${href ? '<span class="material-symbols-outlined text-white/35 shrink-0">chevron_right</span>' : ""}
               </div>
               <p class="text-sm text-white/70 mt-1">${escapeHtml(item.body)}</p>
+              ${preview}
               <div class="flex items-center gap-2 text-xs text-white/45 mt-3">
                 <span class="material-symbols-outlined text-[14px]">schedule</span>
                 <span>${escapeHtml(formatRelativeDate(item.createdAt))}</span>
@@ -3870,7 +3948,23 @@ async function initInbox(user, profile) {
         </${wrapperTag}>
       `;
     })
-    .join("");
+      .join("");
+  }
+
+  filterButtons.forEach((button) => {
+    button.addEventListener("click", () => {
+      activeFilter = button.dataset.inboxFilter || "all";
+      filterButtons.forEach((chip) => {
+        chip.className = filterButtonClass(chip.dataset.inboxFilter || "all");
+      });
+      renderInboxItems();
+    });
+  });
+
+  filterButtons.forEach((chip) => {
+    chip.className = filterButtonClass(chip.dataset.inboxFilter || "all");
+  });
+  renderInboxItems();
 }
 
 function paintSettingsToggle(button, enabled) {

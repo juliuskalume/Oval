@@ -151,7 +151,9 @@ service cloud.firestore {
           'read',
           'createdAt',
           'opportunityId',
-          'profileUid'
+          'profileUid',
+          'commentId',
+          'commentPreview'
         ])
         && request.resource.data.type is string
         && request.resource.data.type.size() > 0
@@ -171,6 +173,18 @@ service cloud.firestore {
         && (
           !request.resource.data.keys().hasAny(['profileUid'])
           || request.resource.data.profileUid is string
+        )
+        && (
+          !request.resource.data.keys().hasAny(['commentId'])
+          || request.resource.data.commentId is string
+        )
+        && (
+          !request.resource.data.keys().hasAny(['commentPreview'])
+          || (
+            request.resource.data.commentPreview is string
+            && request.resource.data.commentPreview.size() > 0
+            && request.resource.data.commentPreview.size() <= 160
+          )
         );
     }
 
