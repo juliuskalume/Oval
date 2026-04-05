@@ -34,7 +34,9 @@ import com.google.android.gms.auth.api.signin.GoogleSignIn
 import com.google.android.gms.auth.api.signin.GoogleSignInAccount
 import com.google.android.gms.auth.api.signin.GoogleSignInClient
 import com.google.android.gms.auth.api.signin.GoogleSignInOptions
+import com.google.android.gms.auth.api.signin.GoogleSignInStatusCodes
 import com.google.android.gms.common.api.ApiException
+import com.google.android.gms.common.api.CommonStatusCodes
 import com.google.android.material.button.MaterialButton
 import com.google.android.material.progressindicator.LinearProgressIndicator
 import com.google.android.material.snackbar.Snackbar
@@ -94,17 +96,19 @@ class MainActivity : AppCompatActivity() {
   private val googleSignInLauncher = registerForActivityResult(
     ActivityResultContracts.StartActivityForResult(),
   ) { result ->
+    if (result.resultCode == Activity.RESULT_CANCELED && result.data == null) {
+      deliverNativeGoogleError("Google sign-in was cancelled.")
+      return@registerForActivityResult
+    }
+
     try {
       val task = GoogleSignIn.getSignedInAccountFromIntent(result.data)
       val account = task.getResult(ApiException::class.java)
       handleNativeGoogleSignInSuccess(account)
+    } catch (error: ApiException) {
+      deliverNativeGoogleError(describeGoogleSignInError(error))
     } catch (error: Exception) {
-      val message = if (result.resultCode == Activity.RESULT_CANCELED) {
-        "Google sign-in was cancelled."
-      } else {
-        error.message ?: "Google sign-in failed."
-      }
-      deliverNativeGoogleError(message)
+      deliverNativeGoogleError(error.message ?: "Google sign-in failed.")
     }
   }
 
@@ -418,6 +422,20 @@ class MainActivity : AppCompatActivity() {
     evaluateOnMainWebView(
       "window.ovalNativeGoogleError && window.ovalNativeGoogleError(${quoteJs(message)});",
     )
+  }
+
+  private fun describeGoogleSignInError(error: ApiException): String {
+    return when (error.statusCode) {
+      GoogleSignInStatusCodes.SIGN_IN_CANCELLED -> "Google sign-in was cancelled."
+      GoogleSignInStatusCodes.SIGN_IN_CURRENTLY_IN_PROGRESS -> "Google sign-in is already in progress."
+      CommonStatusCodes.NETWORK_ERROR -> "Google sign-in failed because the device appears to be offline."
+      CommonStatusCodes.DEVELOPER_ERROR ->
+        "Google sign-in is misconfigured for this APK build. Install the latest APK and try again."
+      else -> {
+        val codeName = GoogleSignInStatusCodes.getStatusCodeString(error.statusCode)
+        "Google sign-in failed ($codeName)."
+      }
+    }
   }
 
   private inner class NativeBridge {
