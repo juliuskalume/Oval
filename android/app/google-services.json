@@ -14,11 +14,11 @@
       },
       "oauth_client": [
         {
-          "client_id": "1081321199371-sdobml6pdq7u5un43vu7idt996l2qgo2.apps.googleusercontent.com",
+          "client_id": "1081321199371-m0ku3s4cbkcauasce4hmkcscmmm317i6.apps.googleusercontent.com",
           "client_type": 1,
           "android_info": {
             "package_name": "com.sentirax.oval",
-            "certificate_hash": "c27a915d3f88124b9e61da440f732caeb9056d11"
+            "certificate_hash": "6b08b4a5438040417c86c568bbec055e1d51c512"
           }
         },
         {

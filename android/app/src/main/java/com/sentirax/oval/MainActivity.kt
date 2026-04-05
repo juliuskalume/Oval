@@ -8,10 +8,9 @@ import android.graphics.Bitmap
 import android.net.Uri
 import android.os.Bundle
 import android.os.Message
-import android.view.MotionEvent
+import android.view.HapticFeedbackConstants
 import android.view.View
 import android.view.ViewGroup
-import android.view.ViewConfiguration
 import android.webkit.CookieManager
 import android.webkit.JavascriptInterface
 import android.webkit.ValueCallback
@@ -47,8 +46,6 @@ class MainActivity : AppCompatActivity() {
   companion object {
     private const val startUrl = "https://oval-nine.vercel.app/"
     private const val stateMainWebView = "state.mainWebView"
-    private const val refreshTopZoneDp = 112f
-    private const val refreshTriggerDistanceDp = 136
     private val internalHosts = setOf("oval-nine.vercel.app")
     private val popupTrustedHostSuffixes = listOf(
       "google.com",
@@ -74,11 +71,6 @@ class MainActivity : AppCompatActivity() {
 
   private var popupWebView: WebView? = null
   private var pendingFileChooser: ValueCallback<Array<Uri>>? = null
-  private var refreshTouchEligible = false
-  private var refreshStartX = 0f
-  private var refreshStartY = 0f
-  private var refreshTopZonePx = 0
-  private var touchSlopPx = 0
 
   private val fileChooserLauncher = registerForActivityResult(
     ActivityResultContracts.StartActivityForResult(),
@@ -138,8 +130,6 @@ class MainActivity : AppCompatActivity() {
     popupContainer = findViewById(R.id.popupContainer)
     popupContent = findViewById(R.id.popupContent)
     popupCloseButton = findViewById(R.id.popupCloseButton)
-    touchSlopPx = ViewConfiguration.get(this).scaledTouchSlop
-    refreshTopZonePx = dpToPx(refreshTopZoneDp)
     googleSignInClient = GoogleSignIn.getClient(
       this,
       GoogleSignInOptions.Builder(GoogleSignInOptions.DEFAULT_SIGN_IN)
@@ -156,19 +146,6 @@ class MainActivity : AppCompatActivity() {
       R.color.oval_accent_alt,
     )
     swipeRefresh.isEnabled = false
-    swipeRefresh.setDistanceToTriggerSync(dpToPx(refreshTriggerDistanceDp.toFloat()))
-    swipeRefresh.setOnChildScrollUpCallback { _, _ ->
-      !refreshTouchEligible || !canUseTopRefresh()
-    }
-    swipeRefresh.setOnRefreshListener {
-      refreshTouchEligible = false
-      swipeRefresh.isEnabled = false
-      currentWebView()?.reload()
-    }
-    mainWebView.setOnTouchListener { _, event ->
-      handleRefreshTouch(event)
-      false
-    }
 
     retryButton.setOnClickListener {
       hideOfflineState()
@@ -213,10 +190,6 @@ class MainActivity : AppCompatActivity() {
   }
 
   private fun currentWebView(): WebView? = popupWebView ?: mainWebView
-
-  private fun dpToPx(value: Float): Int {
-    return (value * resources.displayMetrics.density).toInt()
-  }
 
   private fun resolveLaunchUrl(intent: Intent?): String {
     val data = intent?.data ?: return startUrl
@@ -304,8 +277,7 @@ class MainActivity : AppCompatActivity() {
   private fun showOfflineState(message: String) {
     offlineMessage.text = message
     offlineContainer.isVisible = true
-    swipeRefresh.isRefreshing = false
-    resetRefreshGesture()
+    finishRefreshIndicator()
     progressBar.hide()
   }
 
@@ -324,7 +296,7 @@ class MainActivity : AppCompatActivity() {
     configureWebView(popup, isPopup = true)
     popupContent.addView(popup)
     popupContainer.isVisible = true
-    resetRefreshGesture()
+    finishRefreshIndicator()
     popupWebView = popup
     return popup
   }
@@ -335,56 +307,18 @@ class MainActivity : AppCompatActivity() {
     destroyWebView(popup)
     popupWebView = null
     popupContainer.isVisible = false
-    resetRefreshGesture()
   }
 
-  private fun canUseTopRefresh(): Boolean {
-    if (popupWebView != null) {
-      return false
-    }
-    val webView = currentWebView() ?: return false
-    return webView.scrollY <= 0 && isFeedUrl(webView.url)
-  }
-
-  private fun resetRefreshGesture() {
-    refreshTouchEligible = false
-    if (!swipeRefresh.isRefreshing && popupWebView == null) {
-      swipeRefresh.isEnabled = false
+  private fun startRefreshIndicator() {
+    swipeRefresh.isEnabled = true
+    swipeRefresh.post {
+      swipeRefresh.isRefreshing = true
     }
   }
 
-  private fun handleRefreshTouch(event: MotionEvent) {
-    if (popupWebView != null || swipeRefresh.isRefreshing) {
-      return
-    }
-
-    when (event.actionMasked) {
-      MotionEvent.ACTION_DOWN -> {
-        refreshStartX = event.x
-        refreshStartY = event.y
-        refreshTouchEligible = canUseTopRefresh() && event.y <= refreshTopZonePx
-        swipeRefresh.isEnabled = refreshTouchEligible
-      }
-
-      MotionEvent.ACTION_MOVE -> {
-        if (!refreshTouchEligible) {
-          return
-        }
-        val deltaX = kotlin.math.abs(event.x - refreshStartX)
-        val deltaY = event.y - refreshStartY
-        if (deltaX > touchSlopPx || deltaY < -touchSlopPx || !canUseTopRefresh()) {
-          resetRefreshGesture()
-        }
-      }
-
-      MotionEvent.ACTION_UP,
-      MotionEvent.ACTION_CANCEL,
-      MotionEvent.ACTION_POINTER_DOWN -> {
-        if (!swipeRefresh.isRefreshing) {
-          resetRefreshGesture()
-        }
-      }
-    }
+  private fun finishRefreshIndicator() {
+    swipeRefresh.isRefreshing = false
+    swipeRefresh.isEnabled = false
   }
 
   private fun quoteJs(value: String): String {
@@ -424,6 +358,17 @@ class MainActivity : AppCompatActivity() {
     )
   }
 
+  private fun reloadMainPageFromBridge() {
+    if (popupWebView != null) {
+      closePopupWebView()
+    }
+    if (!isFeedUrl(mainWebView.url)) {
+      return
+    }
+    startRefreshIndicator()
+    mainWebView.reload()
+  }
+
   private fun describeGoogleSignInError(error: ApiException): String {
     return when (error.statusCode) {
       GoogleSignInStatusCodes.SIGN_IN_CANCELLED -> "Google sign-in was cancelled."
@@ -438,11 +383,35 @@ class MainActivity : AppCompatActivity() {
     }
   }
 
+  private fun performNativeHaptic(style: String?) {
+    val feedbackConstant = when (style?.trim()?.lowercase()) {
+      "selection",
+      "toggle" -> HapticFeedbackConstants.CLOCK_TICK
+      "long-press" -> HapticFeedbackConstants.LONG_PRESS
+      else -> HapticFeedbackConstants.VIRTUAL_KEY
+    }
+    root.performHapticFeedback(feedbackConstant)
+  }
+
   private inner class NativeBridge {
     @JavascriptInterface
     fun startGoogleSignIn() {
       runOnUiThread {
         launchNativeGoogleSignIn()
+      }
+    }
+
+    @JavascriptInterface
+    fun reloadCurrentPage() {
+      runOnUiThread {
+        reloadMainPageFromBridge()
+      }
+    }
+
+    @JavascriptInterface
+    fun performHaptic(style: String?) {
+      runOnUiThread {
+        performNativeHaptic(style)
       }
     }
   }
@@ -529,8 +498,7 @@ class MainActivity : AppCompatActivity() {
 
     override fun onPageFinished(view: WebView, url: String?) {
       if (!isPopup) {
-        swipeRefresh.isRefreshing = false
-        resetRefreshGesture()
+        finishRefreshIndicator()
         if (progressBar.progress >= 100) {
           progressBar.hide()
         }
@@ -562,6 +530,7 @@ class MainActivity : AppCompatActivity() {
           error.description?.toString()?.takeIf { it.isNotBlank() }
             ?: getString(R.string.offline_message),
         )
+        finishRefreshIndicator()
       }
       super.onReceivedError(view, request, error)
     }
@@ -576,8 +545,7 @@ class MainActivity : AppCompatActivity() {
         progressBar.progress = newProgress
         if (newProgress >= 100) {
           progressBar.hide()
-          swipeRefresh.isRefreshing = false
-          resetRefreshGesture()
+          finishRefreshIndicator()
         } else {
           progressBar.show()
         }

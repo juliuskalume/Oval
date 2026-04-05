@@ -44,6 +44,19 @@ const FEED_CACHE_KEY = "oval.feed.publicOpportunities.v1";
 const SETTINGS_PREFS_KEY = "oval.settings.preferences";
 const PROFILE_CACHE_PREFIX = "oval.profile.";
 const APP_LOADER_MIN_MS = 420;
+const TAP_HAPTIC_SELECTOR = [
+  'a[href]',
+  'button',
+  '[role="button"]',
+  '[data-action]',
+  '[data-feed-mode]',
+  '[data-tab-button]',
+  '[data-inline-tab]',
+  '[data-filter]',
+  'input[type="submit"]',
+  'input[type="button"]',
+  'summary',
+].join(", ");
 const PWA_THEME_COLOR = "#020617";
 const DEFAULT_COVER =
   "https://images.unsplash.com/photo-1521737604893-d14cc237f11d?auto=format&fit=crop&w=1200&q=80";
@@ -256,6 +269,48 @@ function uniqueUsername(source) {
 
 function normalizeEmail(value) {
   return String(value || "").trim().toLowerCase();
+}
+
+function nativeBridgeMethod(name) {
+  return typeof window !== "undefined" && typeof window.OvalAndroid?.[name] === "function"
+    ? window.OvalAndroid[name].bind(window.OvalAndroid)
+    : null;
+}
+
+function triggerTouchHaptic(style = "tap") {
+  const nativeHaptic = nativeBridgeMethod("performHaptic");
+  if (nativeHaptic) {
+    try {
+      nativeHaptic(style);
+      return;
+    } catch (error) {}
+  }
+  if (typeof navigator !== "undefined" && typeof navigator.vibrate === "function") {
+    navigator.vibrate(style === "selection" ? 8 : 12);
+  }
+}
+
+function installTouchHaptics() {
+  if (typeof document === "undefined" || window.__ovalTouchHapticsInstalled) {
+    return;
+  }
+  window.__ovalTouchHapticsInstalled = true;
+  let lastHapticAt = 0;
+  document.addEventListener("click", (event) => {
+    const target = event.target.closest(TAP_HAPTIC_SELECTOR);
+    if (!target) {
+      return;
+    }
+    if (target.disabled || target.getAttribute("aria-disabled") === "true") {
+      return;
+    }
+    const now = Date.now();
+    if (now - lastHapticAt < 40) {
+      return;
+    }
+    lastHapticAt = now;
+    triggerTouchHaptic(target.matches('[data-action="toggle-like"], [data-action="toggle-save"], [data-action="toggle-applied"]') ? "selection" : "tap");
+  }, true);
 }
 
 function isBootstrapAdminEmail(email) {
@@ -1654,8 +1709,115 @@ function redirectAfterAuth(profile) {
 }
 
 function nativeGoogleBridgeAvailable() {
-  return typeof window !== "undefined"
-    && typeof window.OvalAndroid?.startGoogleSignIn === "function";
+  return Boolean(nativeBridgeMethod("startGoogleSignIn"));
+}
+
+function requestNativePageRefresh() {
+  const reloadNativePage = nativeBridgeMethod("reloadCurrentPage");
+  if (reloadNativePage) {
+    reloadNativePage();
+    return true;
+  }
+  return false;
+}
+
+function installFeedPullToRefresh(slides, status) {
+  const refreshZone = qs("#feedTopBar");
+  if (!slides || !refreshZone || refreshZone.dataset.refreshBound === "1") {
+    return;
+  }
+
+  refreshZone.dataset.refreshBound = "1";
+  const threshold = 72;
+  const axisLock = 26;
+  let tracking = false;
+  let armed = false;
+  let refreshing = false;
+  let startX = 0;
+  let startY = 0;
+
+  function clearPrompt() {
+    if (!refreshing) {
+      setStatus(status, "");
+    }
+  }
+
+  function beginRefresh() {
+    refreshing = true;
+    setStatus(status, "Refreshing feed...", "info");
+    triggerTouchHaptic("selection");
+    if (!requestNativePageRefresh()) {
+      window.setTimeout(() => location.reload(), 90);
+    }
+  }
+
+  refreshZone.addEventListener("touchstart", (event) => {
+    if (refreshing || event.touches.length !== 1) {
+      return;
+    }
+    const touch = event.touches[0];
+    tracking = true;
+    armed = false;
+    startX = touch.clientX;
+    startY = touch.clientY;
+  }, { passive: true });
+
+  refreshZone.addEventListener("touchmove", (event) => {
+    if (!tracking || refreshing || event.touches.length !== 1) {
+      return;
+    }
+
+    const touch = event.touches[0];
+    const deltaX = Math.abs(touch.clientX - startX);
+    const deltaY = touch.clientY - startY;
+
+    if (deltaY <= 0 || deltaX > Math.max(axisLock, deltaY)) {
+      tracking = false;
+      armed = false;
+      clearPrompt();
+      return;
+    }
+
+    if (deltaY > 10) {
+      event.preventDefault();
+      setStatus(status, armed ? "Release to refresh." : "Pull down to refresh.", "info");
+    }
+
+    if (!armed && deltaY >= threshold) {
+      armed = true;
+      triggerTouchHaptic("selection");
+      setStatus(status, "Release to refresh.", "success");
+    } else if (armed && deltaY < threshold) {
+      armed = false;
+      setStatus(status, "Pull down to refresh.", "info");
+    }
+  }, { passive: false });
+
+  function finishGesture() {
+    if (!tracking) {
+      return;
+    }
+    const shouldRefresh = armed;
+    tracking = false;
+    armed = false;
+    if (shouldRefresh) {
+      beginRefresh();
+      return;
+    }
+    clearPrompt();
+  }
+
+  refreshZone.addEventListener("touchend", finishGesture, { passive: true });
+  refreshZone.addEventListener("touchcancel", () => {
+    tracking = false;
+    armed = false;
+    clearPrompt();
+  }, { passive: true });
+
+  window.addEventListener("pageshow", () => {
+    refreshing = false;
+    clearPrompt();
+  });
 }
 
 async function completeNativeGoogleSignIn(idToken) {
@@ -2468,6 +2630,8 @@ async function initFeed(user) {
   if (!slides) {
     return;
   }
+
+  installFeedPullToRefresh(slides, status);
 
   let renderedCount = 0;
 
@@ -4400,6 +4564,7 @@ async function initSettings(user, profile) {
 async function main() {
   const user = await withTimeout(authReady, 1500).catch(() => null);
   let profile = null;
+  installTouchHaptics();
   installNativeGoogleBridge();
   if (user) {
     const cachedProfile = readCachedProfile(user.uid);
