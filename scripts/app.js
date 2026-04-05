@@ -2030,7 +2030,11 @@ function renderCommentThread(comment, repliesByParent, opportunity, user, profil
     ? `comment-thread__replies${deepThread ? " comment-thread__replies--compact" : ""}`
     : "comment-thread__replies";
   const authorHref = comment.authorUid ? profileUrl(comment.authorUid) : "";
-  const authorHandle = escapeHtml(comment.authorHandle || `@${slugify(comment.authorName || "oval-user")}`);
+  const authorNameText = comment.authorName || comment.authorHandle?.replace(/^@/, "") || "Oval User";
+  const authorHandleText = comment.authorHandle || `@${slugify(comment.authorName || "oval-user")}`;
+  const authorName = escapeHtml(authorNameText);
+  const authorHandle = escapeHtml(authorHandleText);
+  const authorReplyLabel = escapeHtml(`${authorNameText} ${authorHandleText}`.trim());
   const badges = [];
   if (isOpportunityPoster(opportunity, comment)) {
     badges.push('<span class="text-[10px] px-2 py-1 rounded-full bg-white text-black">Poster</span>');
@@ -2048,8 +2052,14 @@ function renderCommentThread(comment, repliesByParent, opportunity, user, profil
         <div class="comment-thread__content flex-1 min-w-0">
           <div class="${metaClass}">
             ${authorHref
-    ? `<a href="${authorHref}" class="comment-thread__name text-sm font-semibold text-white/90 hover:text-white transition">${authorHandle}</a>`
-    : `<p class="comment-thread__name text-sm font-semibold text-white/90">${authorHandle}</p>`}
+    ? `<a href="${authorHref}" class="inline-flex items-center gap-2 max-w-full min-w-0 hover:text-white transition">
+                <span class="comment-thread__name text-sm font-semibold text-white/90">${authorName}</span>
+                <span class="comment-thread__handle text-sm text-white/50">${authorHandle}</span>
+              </a>`
+    : `<div class="inline-flex items-center gap-2 max-w-full min-w-0">
+                <span class="comment-thread__name text-sm font-semibold text-white/90">${authorName}</span>
+                <span class="comment-thread__handle text-sm text-white/50">${authorHandle}</span>
+              </div>`}
             ${badges.join("")}
             <span class="comment-thread__timestamp text-xs text-white/40">${escapeHtml(formatRelativeDate(comment.createdAt) || "just now")}</span>
             ${edited ? '<span class="text-[11px] text-white/35 whitespace-nowrap">edited</span>' : ""}
@@ -2064,7 +2074,7 @@ function renderCommentThread(comment, repliesByParent, opportunity, user, profil
                 </button>
               ` : ""}
               ${canReply && !deleted ? `
-                <button type="button" class="hover:text-white transition" data-reply-id="${escapeHtml(comment.id)}" data-reply-name="${authorHandle}">Reply</button>
+                <button type="button" class="hover:text-white transition" data-reply-id="${escapeHtml(comment.id)}" data-reply-name="${authorReplyLabel}">Reply</button>
               ` : ""}
               ${canManage ? `
                 <button type="button" class="hover:text-white transition" data-edit-comment="${escapeHtml(comment.id)}">Edit</button>
