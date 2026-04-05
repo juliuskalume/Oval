@@ -1769,9 +1769,23 @@ function renderCommentThread(comment, repliesByParent, opportunity, user, profil
   const edited = commentWasEdited(comment);
   const expanded = expandedReplyIds.has(comment.id);
   const canManage = canManageComment(comment, user, profile, opportunity) && !deleted;
-  const threadClass = depth ? "comment-thread comment-thread--reply" : "comment-thread";
-  const rowClass = depth ? "comment-thread__row comment-thread__row--reply" : "comment-thread__row";
-  const avatarClass = depth ? "comment-thread__avatar comment-thread__avatar--reply" : "comment-thread__avatar";
+  const compactThread = depth >= 2;
+  const threadClass = depth
+    ? `comment-thread comment-thread--reply${compactThread ? " comment-thread--reply-compact" : ""}`
+    : "comment-thread";
+  const rowClass = depth
+    ? `comment-thread__row comment-thread__row--reply${compactThread ? " comment-thread__row--compact" : ""}`
+    : "comment-thread__row";
+  const avatarClass = depth
+    ? `comment-thread__avatar comment-thread__avatar--reply${compactThread ? " comment-thread__avatar--compact" : ""}`
+    : "comment-thread__avatar";
+  const metaClass = compactThread
+    ? "comment-thread__meta comment-thread__meta--compact"
+    : "comment-thread__meta";
+  const actionsClass = compactThread
+    ? "comment-thread__actions comment-thread__actions--compact mt-3 flex items-center flex-wrap text-xs text-white/50"
+    : "comment-thread__actions mt-3 flex items-center flex-wrap text-xs text-white/50";
+  const repliesClass = compactThread ? "mt-2 space-y-2" : "mt-3 space-y-3";
   const authorHref = comment.authorUid ? profileUrl(comment.authorUid) : "";
   const authorName = escapeHtml(comment.authorName || "Oval User");
   const authorHandle = comment.authorHandle ? escapeHtml(comment.authorHandle) : "";
@@ -1789,19 +1803,19 @@ function renderCommentThread(comment, repliesByParent, opportunity, user, profil
         ${authorHref
     ? `<a href="${authorHref}" class="shrink-0"><img src="${escapeHtml(comment.authorPhotoURL || DEFAULT_AVATAR)}" class="${avatarClass} rounded-full object-cover shrink-0" alt="${escapeHtml(comment.authorName || "Comment author")}"></a>`
     : `<img src="${escapeHtml(comment.authorPhotoURL || DEFAULT_AVATAR)}" class="${avatarClass} rounded-full object-cover shrink-0" alt="${escapeHtml(comment.authorName || "Comment author")}">`}
-        <div class="flex-1 min-w-0">
-          <div class="flex items-center gap-2 flex-wrap">
+        <div class="comment-thread__content flex-1 min-w-0">
+          <div class="${metaClass}">
             ${authorHref
-    ? `<a href="${authorHref}" class="text-sm font-semibold text-white/90 hover:text-white transition">${authorName}</a>`
-    : `<p class="text-sm font-semibold text-white/90">${authorName}</p>`}
-            ${authorHandle ? `<span class="text-xs text-white/45">${authorHandle}</span>` : ""}
+    ? `<a href="${authorHref}" class="comment-thread__name text-sm font-semibold text-white/90 hover:text-white transition">${authorName}</a>`
+    : `<p class="comment-thread__name text-sm font-semibold text-white/90">${authorName}</p>`}
+            ${authorHandle ? `<span class="comment-thread__handle text-xs text-white/45">${authorHandle}</span>` : ""}
             ${badges.join("")}
-            <span class="text-xs text-white/40">${escapeHtml(formatRelativeDate(comment.createdAt) || "just now")}</span>
-            ${edited ? '<span class="text-[11px] text-white/35">edited</span>' : ""}
+            <span class="comment-thread__timestamp text-xs text-white/40">${escapeHtml(formatRelativeDate(comment.createdAt) || "just now")}</span>
+            ${edited ? '<span class="text-[11px] text-white/35 whitespace-nowrap">edited</span>' : ""}
           </div>
-          <p class="text-sm ${deleted ? "italic text-white/40" : "text-white/80"} mt-2 leading-6 break-words">${deleted ? "Comment deleted." : renderMultilineText(comment.body)}</p>
+          <p class="comment-thread__body text-sm ${deleted ? "italic text-white/40" : "text-white/80"} mt-2 leading-6 break-words">${deleted ? "Comment deleted." : renderMultilineText(comment.body)}</p>
           ${(replies.length || canReply || canManage) ? `
-            <div class="comment-thread__actions mt-3 flex items-center flex-wrap text-xs text-white/50">
+            <div class="${actionsClass}">
               ${replies.length ? `
                 <button type="button" class="inline-flex items-center gap-1 hover:text-white transition" data-toggle-replies="${escapeHtml(comment.id)}">
                   <span class="material-symbols-outlined text-[14px] leading-none">${expanded ? "expand_more" : "chevron_right"}</span>
@@ -1818,7 +1832,7 @@ function renderCommentThread(comment, repliesByParent, opportunity, user, profil
             </div>
           ` : ""}
           ${replies.length && expanded ? `
-            <div class="mt-3 space-y-3">
+            <div class="${repliesClass}">
               ${replies.map((reply) => renderCommentThread(reply, repliesByParent, opportunity, user, profile, canReply, expandedReplyIds, depth + 1)).join("")}
             </div>
           ` : ""}
