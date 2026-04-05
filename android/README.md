@@ -31,3 +31,4 @@ Debug APK:
 - External links open in a browser custom tab.
 - Back press closes popups first, then navigates WebView history, then backgrounds the app.
 - File pickers from the hosted site are supported.
+- Pull-to-refresh is intentionally guarded: normal down-flicks stay available for the hosted feed, and refresh only arms after a held pull from the top edge.
