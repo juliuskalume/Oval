@@ -69,15 +69,6 @@ body.app-loading {
   bottom: calc(7.75rem + var(--safe-area-bottom)) !important;
 }
 
-.feed-reel {
-  overscroll-behavior-y: contain;
-  -webkit-overflow-scrolling: touch;
-}
-
-.feed-slide {
-  scroll-snap-stop: always;
-}
-
 .comment-thread {
   min-width: 0;
 }
