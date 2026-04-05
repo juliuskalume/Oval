@@ -8,7 +8,6 @@ import android.graphics.Bitmap
 import android.net.Uri
 import android.os.Bundle
 import android.os.Message
-import android.view.HapticFeedbackConstants
 import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
@@ -39,8 +38,7 @@ class MainActivity : AppCompatActivity() {
   companion object {
     private const val startUrl = "https://oval-nine.vercel.app/"
     private const val stateMainWebView = "state.mainWebView"
-    private const val refreshArmDelayMs = 320L
-    private const val refreshTopZoneDp = 72f
+    private const val refreshTopZoneDp = 112f
     private const val refreshTriggerDistanceDp = 136
     private val internalHosts = setOf("oval-nine.vercel.app")
     private val popupTrustedHostSuffixes = listOf(
@@ -67,12 +65,10 @@ class MainActivity : AppCompatActivity() {
   private var popupWebView: WebView? = null
   private var pendingFileChooser: ValueCallback<Array<Uri>>? = null
   private var refreshTouchEligible = false
-  private var refreshArmed = false
   private var refreshStartX = 0f
   private var refreshStartY = 0f
   private var refreshTopZonePx = 0
   private var touchSlopPx = 0
-  private var refreshArmRunnable: Runnable? = null
 
   private val fileChooserLauncher = registerForActivityResult(
     ActivityResultContracts.StartActivityForResult(),
@@ -126,10 +122,11 @@ class MainActivity : AppCompatActivity() {
     swipeRefresh.isEnabled = false
     swipeRefresh.setDistanceToTriggerSync(dpToPx(refreshTriggerDistanceDp.toFloat()))
     swipeRefresh.setOnChildScrollUpCallback { _, _ ->
-      !refreshArmed
+      !refreshTouchEligible || !canUseTopRefresh()
     }
     swipeRefresh.setOnRefreshListener {
-      refreshArmed = false
+      refreshTouchEligible = false
+      swipeRefresh.isEnabled = false
       currentWebView()?.reload()
     }
     swipeRefresh.setOnTouchListener { _, event ->
@@ -205,6 +202,21 @@ class MainActivity : AppCompatActivity() {
     }
   }
 
+  private fun isFeedUrl(url: String?): Boolean {
+    if (url.isNullOrBlank()) {
+      return false
+    }
+    return try {
+      val uri = Uri.parse(url)
+      isInternalUrl(uri) && (
+        uri.path.equals("/feed.html", ignoreCase = true)
+          || uri.path.equals("/", ignoreCase = true)
+      )
+    } catch (_: Exception) {
+      false
+    }
+  }
+
   @SuppressLint("SetJavaScriptEnabled")
   private fun configureWebView(webView: WebView, isPopup: Boolean) {
     CookieManager.getInstance().apply {
@@ -254,7 +266,7 @@ class MainActivity : AppCompatActivity() {
     offlineMessage.text = message
     offlineContainer.isVisible = true
     swipeRefresh.isRefreshing = false
-    resetRefreshArming()
+    resetRefreshGesture()
     progressBar.hide()
   }
 
@@ -273,7 +285,7 @@ class MainActivity : AppCompatActivity() {
     configureWebView(popup, isPopup = true)
     popupContent.addView(popup)
     popupContainer.isVisible = true
-    resetRefreshArming()
+    resetRefreshGesture()
     popupWebView = popup
     return popup
   }
@@ -284,23 +296,19 @@ class MainActivity : AppCompatActivity() {
     destroyWebView(popup)
     popupWebView = null
     popupContainer.isVisible = false
-    resetRefreshArming()
+    resetRefreshGesture()
   }
 
-  private fun armRefreshIfEligible() {
-    if (!refreshTouchEligible || popupWebView != null) {
-      return
+  private fun canUseTopRefresh(): Boolean {
+    if (popupWebView != null) {
+      return false
     }
-    refreshArmed = true
-    swipeRefresh.isEnabled = true
-    root.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
+    val webView = currentWebView() ?: return false
+    return webView.scrollY <= 0 && isFeedUrl(webView.url)
   }
 
-  private fun resetRefreshArming() {
-    refreshArmRunnable?.let { swipeRefresh.removeCallbacks(it) }
-    refreshArmRunnable = null
+  private fun resetRefreshGesture() {
     refreshTouchEligible = false
-    refreshArmed = false
     if (!swipeRefresh.isRefreshing && popupWebView == null) {
       swipeRefresh.isEnabled = false
     }
@@ -315,25 +323,18 @@ class MainActivity : AppCompatActivity() {
       MotionEvent.ACTION_DOWN -> {
         refreshStartX = event.x
         refreshStartY = event.y
-        refreshTouchEligible = event.y <= refreshTopZonePx
-        refreshArmed = false
-        swipeRefresh.isEnabled = false
-        refreshArmRunnable?.let { swipeRefresh.removeCallbacks(it) }
-        if (refreshTouchEligible) {
-          refreshArmRunnable = Runnable {
-            armRefreshIfEligible()
-          }.also { swipeRefresh.postDelayed(it, refreshArmDelayMs) }
-        }
+        refreshTouchEligible = canUseTopRefresh() && event.y <= refreshTopZonePx
+        swipeRefresh.isEnabled = refreshTouchEligible
       }
 
       MotionEvent.ACTION_MOVE -> {
-        if (!refreshTouchEligible || refreshArmed) {
+        if (!refreshTouchEligible) {
           return
         }
         val deltaX = kotlin.math.abs(event.x - refreshStartX)
-        val deltaY = kotlin.math.abs(event.y - refreshStartY)
-        if (deltaX > touchSlopPx || deltaY > touchSlopPx) {
-          resetRefreshArming()
+        val deltaY = event.y - refreshStartY
+        if (deltaX > touchSlopPx || deltaY < -touchSlopPx || !canUseTopRefresh()) {
+          resetRefreshGesture()
         }
       }
 
@@ -341,7 +342,7 @@ class MainActivity : AppCompatActivity() {
       MotionEvent.ACTION_CANCEL,
       MotionEvent.ACTION_POINTER_DOWN -> {
         if (!swipeRefresh.isRefreshing) {
-          resetRefreshArming()
+          resetRefreshGesture()
         }
       }
     }
@@ -430,7 +431,7 @@ class MainActivity : AppCompatActivity() {
     override fun onPageFinished(view: WebView, url: String?) {
       if (!isPopup) {
         swipeRefresh.isRefreshing = false
-        resetRefreshArming()
+        resetRefreshGesture()
         if (progressBar.progress >= 100) {
           progressBar.hide()
         }
@@ -477,7 +478,7 @@ class MainActivity : AppCompatActivity() {
         if (newProgress >= 100) {
           progressBar.hide()
           swipeRefresh.isRefreshing = false
-          resetRefreshArming()
+          resetRefreshGesture()
         } else {
           progressBar.show()
         }
