@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+  <color name="oval_background">#020617</color>
+  <color name="oval_surface">#0B1220</color>
+  <color name="oval_surface_alt">#0F172A</color>
+  <color name="oval_accent">#22C55E</color>
+  <color name="oval_accent_alt">#22D3EE</color>
+  <color name="oval_text">#E5E7EB</color>
+  <color name="oval_text_muted">#94A3B8</color>
+  <color name="ic_launcher_background">#020617</color>
+</resources>

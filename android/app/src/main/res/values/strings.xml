@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+  <string name="app_name">Oval</string>
+  <string name="offline_title">You’re offline</string>
+  <string name="offline_message">Reconnect and retry, or wait for the hosted app to load again.</string>
+  <string name="retry">Retry</string>
+  <string name="close_popup">Close popup</string>
+  <string name="external_open_failed">Unable to open that link on this device.</string>
+  <string name="file_picker_unavailable">No file picker is available on this device.</string>
+</resources>

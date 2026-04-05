@@ -4,3 +4,8 @@ Thumbs.db
 firebase-debug.log
 *-smoke.png
 .vercel
+android/.gradle/
+android/.gradle-dist/
+android/local.properties
+android/app/build/
+android/build/

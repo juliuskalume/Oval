@@ -1,0 +1,94 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+  xmlns:app="http://schemas.android.com/apk/res-auto"
+  android:id="@+id/root"
+  android:layout_width="match_parent"
+  android:layout_height="match_parent"
+  android:background="@color/oval_background">
+
+  <androidx.swiperefreshlayout.widget.SwipeRefreshLayout
+    android:id="@+id/swipeRefresh"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent">
+
+    <WebView
+      android:id="@+id/webView"
+      android:layout_width="match_parent"
+      android:layout_height="match_parent"
+      android:background="@color/oval_background" />
+  </androidx.swiperefreshlayout.widget.SwipeRefreshLayout>
+
+  <com.google.android.material.progressindicator.LinearProgressIndicator
+    android:id="@+id/progressBar"
+    style="@style/Widget.Material3.LinearProgressIndicator"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:indeterminate="false"
+    android:visibility="gone"
+    app:indicatorColor="@color/oval_accent"
+    app:trackColor="@color/oval_surface_alt" />
+
+  <LinearLayout
+    android:id="@+id/offlineContainer"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/oval_background"
+    android:gravity="center"
+    android:orientation="vertical"
+    android:padding="24dp"
+    android:visibility="gone">
+
+    <TextView
+      android:layout_width="wrap_content"
+      android:layout_height="wrap_content"
+      android:text="@string/offline_title"
+      android:textColor="@color/oval_text"
+      android:textSize="22sp"
+      android:textStyle="bold" />
+
+    <TextView
+      android:id="@+id/offlineMessage"
+      android:layout_width="wrap_content"
+      android:layout_height="wrap_content"
+      android:layout_marginTop="12dp"
+      android:gravity="center"
+      android:text="@string/offline_message"
+      android:textColor="@color/oval_text_muted"
+      android:textSize="15sp" />
+
+    <com.google.android.material.button.MaterialButton
+      android:id="@+id/retryButton"
+      style="@style/Widget.Material3.Button"
+      android:layout_width="wrap_content"
+      android:layout_height="wrap_content"
+      android:layout_marginTop="20dp"
+      android:text="@string/retry" />
+  </LinearLayout>
+
+  <FrameLayout
+    android:id="@+id/popupContainer"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="#E6020617"
+    android:visibility="gone">
+
+    <FrameLayout
+      android:id="@+id/popupContent"
+      android:layout_width="match_parent"
+      android:layout_height="match_parent"
+      android:layout_marginTop="56dp" />
+
+    <ImageButton
+      android:id="@+id/popupCloseButton"
+      android:layout_width="40dp"
+      android:layout_height="40dp"
+      android:layout_gravity="top|end"
+      android:layout_margin="12dp"
+      android:background="@drawable/bg_popup_close"
+      android:contentDescription="@string/close_popup"
+      android:padding="8dp"
+      android:src="@drawable/ic_close"
+      android:tint="@color/oval_text" />
+  </FrameLayout>
+
+</FrameLayout>
