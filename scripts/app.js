@@ -36,8 +36,11 @@ const MAX_CAPTION_LENGTH = 150;
 const MAX_COMMENT_LENGTH = 280;
 const FEED_CAPTION_LENGTH = 100;
 const FEED_BATCH_SIZE = 4;
+const FEED_CACHE_LIMIT = 10;
 const FEED_VIDEO_SOUND_KEY = "oval.feedVideoSoundEnabled";
+const FEED_CACHE_KEY = "oval.feed.publicOpportunities.v1";
 const SETTINGS_PREFS_KEY = "oval.settings.preferences";
+const PROFILE_CACHE_PREFIX = "oval.profile.";
 const APP_LOADER_MIN_MS = 420;
 const PWA_THEME_COLOR = "#020617";
 const DEFAULT_COVER =
@@ -322,6 +325,21 @@ function setSettingsPreferences(preferences) {
   } catch (error) {}
 }
 
+function readStoredJson(key, fallback = null) {
+  try {
+    const stored = localStorage.getItem(key);
+    return stored ? JSON.parse(stored) : fallback;
+  } catch (error) {
+    return fallback;
+  }
+}
+
+function writeStoredJson(key, value) {
+  try {
+    localStorage.setItem(key, JSON.stringify(value));
+  } catch (error) {}
+}
+
 function toDate(value) {
   if (!value) {
     return null;
@@ -332,8 +350,134 @@ function toDate(value) {
   if (typeof value.toDate === "function") {
     return value.toDate();
   }
+  if (typeof value === "object" && typeof value.seconds === "number") {
+    return new Date((value.seconds * 1000) + Math.round(Number(value.nanoseconds || 0) / 1000000));
+  }
   const parsed = new Date(value);
   return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+function serializeDateForCache(value) {
+  const date = toDate(value);
+  return date ? date.toISOString() : null;
+}
+
+function serializeOpportunityForCache(opportunity) {
+  return {
+    ...opportunity,
+    createdAt: serializeDateForCache(opportunity.createdAt),
+    updatedAt: serializeDateForCache(opportunity.updatedAt),
+    deadline: serializeDateForCache(opportunity.deadline),
+  };
+}
+
+function cachedProfileKey(uid) {
+  return `${PROFILE_CACHE_PREFIX}${uid}`;
+}
+
+function cachedUsernameFromUser(user) {
+  return slugify(user?.displayName || user?.email?.split("@")[0] || "oval-user").slice(0, 18) || "oval-user";
+}
+
+function readCachedProfile(uid) {
+  if (!uid) {
+    return null;
+  }
+  return readStoredJson(cachedProfileKey(uid), null);
+}
+
+function writeCachedProfile(uid, profile) {
+  if (!uid || !profile) {
+    return;
+  }
+  writeStoredJson(cachedProfileKey(uid), {
+    displayName: profile.displayName || "Oval User",
+    username: profile.username || "oval-user",
+    email: normalizeEmail(profile.email || ""),
+    photoURL: profile.photoURL || DEFAULT_AVATAR,
+    role: profile.role || "member",
+    bio: profile.bio || defaultBio(),
+  });
+}
+
+function fallbackProfileFromUser(user, cachedProfile = null) {
+  return {
+    displayName: cachedProfile?.displayName || user?.displayName || user?.email?.split("@")[0] || "Oval User",
+    username: cachedProfile?.username || cachedUsernameFromUser(user),
+    email: normalizeEmail(cachedProfile?.email || user?.email || ""),
+    photoURL: cachedProfile?.photoURL || user?.photoURL || DEFAULT_AVATAR,
+    role: cachedProfile?.role || (isBootstrapAdminEmail(user?.email) ? "admin" : "member"),
+    bio: cachedProfile?.bio || defaultBio(),
+  };
+}
+
+function readCachedPublicOpportunities() {
+  const items = readStoredJson(FEED_CACHE_KEY, []);
+  if (!Array.isArray(items)) {
+    return [];
+  }
+  return sortByCreatedAtDesc(items.filter((item) => item && item.id));
+}
+
+function writeCachedPublicOpportunities(opportunities = []) {
+  const unique = [];
+  const seen = new Set();
+  sortByCreatedAtDesc(opportunities)
+    .filter((item) => item?.id)
+    .forEach((item) => {
+      if (seen.has(item.id)) {
+        return;
+      }
+      seen.add(item.id);
+      unique.push(serializeOpportunityForCache(item));
+    });
+  writeStoredJson(FEED_CACHE_KEY, unique.slice(0, FEED_CACHE_LIMIT));
+}
+
+function upsertCachedPublicOpportunity(opportunity) {
+  if (!opportunity?.id || opportunity.status !== "published") {
+    return;
+  }
+  const cached = readCachedPublicOpportunities().filter((item) => item.id !== opportunity.id);
+  cached.unshift(opportunity);
+  writeCachedPublicOpportunities(cached);
+}
+
+function findCachedOpportunity(opportunityId) {
+  return readCachedPublicOpportunities().find((item) => item.id === opportunityId) || null;
+}
+
+function opportunityListSignature(items = []) {
+  return items
+    .map((item) => `${item.id}:${toDate(item.updatedAt)?.getTime() || toDate(item.createdAt)?.getTime() || 0}`)
+    .join("|");
+}
+
+function warmFeedMediaCache(opportunities = []) {
+  const mediaUrls = Array.from(new Set(
+    opportunities
+      .filter((item) => item?.id)
+      .map((item) => opportunityMedia(item))
+      .filter(Boolean),
+  )).slice(0, FEED_CACHE_LIMIT);
+
+  if (!mediaUrls.length || typeof fetch !== "function") {
+    return;
+  }
+
+  window.setTimeout(() => {
+    mediaUrls.forEach((url, index) => {
+      window.setTimeout(() => {
+        try {
+          const target = new URL(url, location.href);
+          const init = target.origin === location.origin
+            ? { credentials: "omit" }
+            : { mode: "no-cors", credentials: "omit" };
+          fetch(target.toString(), init).catch(() => {});
+        } catch (error) {}
+      }, index * 180);
+    });
+  }, 0);
 }
 
 function formatDate(value) {
@@ -795,14 +939,24 @@ async function ensureUserProfile(user, options = {}) {
   return profile;
 }
 
+async function fetchPublicOpportunitiesFromNetwork() {
+  const snapshot = await withTimeout(
+    getDocs(query(collection(db, "opportunities"), where("status", "==", "published"))),
+  );
+  return sortByCreatedAtDesc(snapshot.docs.map(normalizeOpportunity));
+}
+
 async function loadPublicOpportunities() {
+  const cached = readCachedPublicOpportunities();
   try {
-    const snapshot = await withTimeout(
-      getDocs(query(collection(db, "opportunities"), where("status", "==", "published"))),
-    );
-    return sortByCreatedAtDesc(snapshot.docs.map(normalizeOpportunity));
+    const items = await fetchPublicOpportunitiesFromNetwork();
+    writeCachedPublicOpportunities(items);
+    return items;
   } catch (error) {
     console.warn("Falling back to bundled opportunities.", error);
+    if (cached.length) {
+      return cached;
+    }
     return (await ensureDemoData()).filter((item) => item.status === "published");
   }
 }
@@ -986,13 +1140,19 @@ async function setFollowState(user, currentProfile, targetProfile, shouldFollow)
 async function loadOpportunity(opportunityId, options = {}) {
   const requestedId = opportunityId || DEMO_OPPORTUNITIES[0].id;
   const fallbackDemo = (await ensureDemoData()).find((item) => item.id === requestedId);
+  const cachedOpportunity = findCachedOpportunity(requestedId);
   try {
     const snapshot = await withTimeout(getDoc(doc(db, "opportunities", requestedId)));
     if (snapshot.exists()) {
-      return normalizeOpportunity(snapshot);
+      const liveOpportunity = normalizeOpportunity(snapshot);
+      upsertCachedPublicOpportunity(liveOpportunity);
+      return liveOpportunity;
     }
   } catch (error) {
     console.warn("Opportunity load failed.", error);
+  }
+  if (cachedOpportunity) {
+    return cachedOpportunity;
   }
   if (fallbackDemo) {
     return fallbackDemo;
@@ -1503,6 +1663,17 @@ function applySkipLinks(root = document) {
       clearPendingReturnTo();
     });
   });
+}
+
+async function initIndex(user, profile) {
+  if (user) {
+    redirectAfterAuth(profile || fallbackProfileFromUser(user, readCachedProfile(user.uid)));
+    return;
+  }
+  const target = new URL("onboarding.html", location.href);
+  target.search = location.search;
+  target.hash = location.hash;
+  location.replace(target.toString());
 }
 
 async function initOnboarding(user, profile) {
@@ -2059,13 +2230,26 @@ async function copyText(value) {
   }
 }
 
+function resolveOpportunityList(source) {
+  if (typeof source === "function") {
+    return source() || [];
+  }
+  if (Array.isArray(source)) {
+    return source;
+  }
+  if (Array.isArray(source?.items)) {
+    return source.items;
+  }
+  return [];
+}
+
 async function bindOpportunityActionButtons(container, opportunities, states, user, statusTarget) {
   container.addEventListener("click", async (event) => {
     const button = event.target.closest("[data-action]");
     if (!button) {
       return;
     }
-    const opportunity = opportunities.find((item) => item.id === button.dataset.id);
+    const opportunity = resolveOpportunityList(opportunities).find((item) => item.id === button.dataset.id);
     if (!opportunity) {
       return;
     }
@@ -2194,12 +2378,18 @@ async function bindOpportunityActionButtons(container, opportunities, states, us
 }
 
 async function initFeed(user) {
-  const opportunities = await loadPublicOpportunities();
-  const states = await refreshStates(user);
+  const cachedOpportunities = readCachedPublicOpportunities();
+  let opportunities = cachedOpportunities.length
+    ? cachedOpportunities
+    : await loadPublicOpportunities();
+  const [states, initialFollowingIds] = await Promise.all([
+    refreshStates(user),
+    user ? loadFollowingIds(user.uid) : Promise.resolve(new Set()),
+  ]);
   const slides = qs("#feedSlides");
   const status = qs("#feedStatus");
   const modeButtons = qsa("[data-feed-mode]");
-  let followingIds = user ? await loadFollowingIds(user.uid) : new Set();
+  let followingIds = initialFollowingIds;
   let activeMode = "for-you";
   let activeOpportunities = opportunities;
 
@@ -2347,7 +2537,7 @@ async function initFeed(user) {
     ensureFeedBuffer();
   }
 
-  await bindOpportunityActionButtons(slides, opportunities, states, user, status);
+  await bindOpportunityActionButtons(slides, () => opportunities, states, user, status);
 
   modeButtons.forEach((button) => {
     button.addEventListener("click", async () => {
@@ -2397,6 +2587,34 @@ async function initFeed(user) {
   slides.addEventListener("scroll", maybeAppendMore, { passive: true });
   paintModeButtons();
   rebuildFeed();
+
+  if (cachedOpportunities.length) {
+    setStatus(
+      status,
+      navigator.onLine
+        ? "Showing saved posts while the feed refreshes."
+        : "Showing saved posts while you are offline.",
+      "info",
+    );
+    const initialSignature = opportunityListSignature(cachedOpportunities);
+    loadPublicOpportunities()
+      .then((freshOpportunities) => {
+        warmFeedMediaCache(freshOpportunities.length ? freshOpportunities : cachedOpportunities);
+        const nextSignature = opportunityListSignature(freshOpportunities);
+        opportunities = freshOpportunities;
+        if (nextSignature !== initialSignature) {
+          rebuildFeed();
+        }
+        setStatus(status, navigator.onLine ? "" : "Showing saved posts while you are offline.");
+      })
+      .catch(() => {
+        warmFeedMediaCache(cachedOpportunities);
+        setStatus(status, "Showing saved posts while you are offline.", "info");
+      });
+    return;
+  }
+
+  warmFeedMediaCache(opportunities);
 }
 
 async function initDetails(user, profile) {
@@ -4109,13 +4327,28 @@ async function initSettings(user, profile) {
 
 async function main() {
   const user = await withTimeout(authReady, 1500).catch(() => null);
-  const profile = user ? await ensureUserProfile(user) : null;
+  let profile = null;
+  if (user) {
+    const cachedProfile = readCachedProfile(user.uid);
+    try {
+      profile = await ensureUserProfile(user);
+      writeCachedProfile(user.uid, profile);
+    } catch (error) {
+      console.warn("Profile bootstrap failed, using cached profile.", error);
+      profile = fallbackProfileFromUser(user, cachedProfile);
+      writeCachedProfile(user.uid, profile);
+    }
+  }
 
   applyNavForRole(profile);
   if (page !== "inbox" && page !== "notifications") {
     await refreshInboxNavIndicator(user);
   }
 
+  if (page === "index") {
+    await initIndex(user, profile);
+    return;
+  }
   if (page === "onboarding") {
     await initOnboarding(user, profile);
     return;

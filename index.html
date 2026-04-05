@@ -11,7 +11,7 @@
   <link rel="stylesheet" href="styles/theme.css" />
   <title>Oval</title>
 </head>
-<body class="app-loading bg-black text-white min-h-screen">
+<body data-page="index" class="app-loading bg-black text-white min-h-screen">
   <div id="appLoader" class="app-loader" aria-live="polite" aria-label="Loading Oval">
     <div class="app-loader__shell" role="status">
       <div class="app-loader__halo"></div>
@@ -23,11 +23,6 @@
       <div class="app-loader__caption">Preparing your app shell</div>
     </div>
   </div>
-  <script>
-    const target = new URL("onboarding.html", location.href);
-    target.search = location.search;
-    target.hash = location.hash;
-    location.replace(target.toString());
-  </script>
+  <script type="module" src="scripts/app.js"></script>
 </body>
 </html>

@@ -1,4 +1,4 @@
-const CACHE_VERSION = "v16";
+const CACHE_VERSION = "v17";
 const STATIC_CACHE = `oval-static-${CACHE_VERSION}`;
 const RUNTIME_CACHE = `oval-runtime-${CACHE_VERSION}`;
 const OFFLINE_URL = "./offline.html";
@@ -71,6 +71,16 @@ function isStaticExternalAsset(url) {
   return url.origin === "https://www.gstatic.com" && url.pathname.includes("/firebasejs/");
 }
 
+function isCacheableExternalMediaAsset(url) {
+  const host = url.hostname.toLowerCase();
+  return host === "images.unsplash.com"
+    || host === "firebasestorage.googleapis.com"
+    || host === "storage.googleapis.com"
+    || host === "lh3.googleusercontent.com"
+    || host.endsWith(".googleusercontent.com")
+    || host.endsWith(".firebasestorage.app");
+}
+
 async function networkFirstNavigation(event) {
   const preload = await event.preloadResponse;
   if (preload) {
@@ -88,9 +98,10 @@ async function networkFirstNavigation(event) {
   }
 }
 
-async function staleWhileRevalidate(request) {
+async function staleWhileRevalidate(request, options = {}) {
+  const ignoreSearch = options.ignoreSearch !== false;
   const cache = await caches.open(RUNTIME_CACHE);
-  const cached = await cache.match(request, { ignoreSearch: true });
+  const cached = await cache.match(request, { ignoreSearch });
   const networkPromise = fetch(request)
     .then((response) => {
       if (response && (response.ok || response.type === "opaque")) {
@@ -147,5 +158,10 @@ self.addEventListener("fetch", (event) => {
 
   if (isStaticExternalAsset(url)) {
     event.respondWith(staleWhileRevalidate(request));
+    return;
+  }
+
+  if (isCacheableExternalMediaAsset(url)) {
+    event.respondWith(staleWhileRevalidate(request, { ignoreSearch: false }));
   }
 });
