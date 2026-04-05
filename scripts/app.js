@@ -1130,6 +1130,50 @@ async function createNotification(uid, payload) {
   });
 }
 
+function notificationDestination(item) {
+  if (!item) {
+    return "";
+  }
+  if (item.type === "follow" && item.profileUid) {
+    return profileUrl(item.profileUid);
+  }
+  if (item.type === "admin-granted") {
+    return "admin-moderation.html";
+  }
+  if ((item.type === "comment" || item.type === "comment-reply") && item.opportunityId) {
+    return commentsUrl(item.opportunityId);
+  }
+  if (item.opportunityId) {
+    return detailsUrl(item.opportunityId);
+  }
+  if (item.profileUid) {
+    return profileUrl(item.profileUid);
+  }
+  return "";
+}
+
+function notificationIcon(item) {
+  if (item?.type === "follow") {
+    return "person_add";
+  }
+  if (item?.type?.includes("application")) {
+    return "task_alt";
+  }
+  if (item?.type === "comment" || item?.type === "comment-reply") {
+    return "chat_bubble";
+  }
+  if (item?.type === "admin-granted") {
+    return "shield_person";
+  }
+  if (item?.type === "moderation-approved") {
+    return "verified";
+  }
+  if (item?.type === "moderation-archived") {
+    return "inventory_2";
+  }
+  return "notifications";
+}
+
 function isOpportunityPoster(opportunity, comment) {
   if (!opportunity || !comment) {
     return false;
@@ -3798,15 +3842,24 @@ async function initInbox(user, profile) {
     return;
   }
   list.innerHTML = items
-    .map(
-      (item) => `
-        <div class="rounded-3xl bg-white/5 border border-white/10 p-4">
+    .map((item) => {
+      const href = notificationDestination(item);
+      const wrapperTag = href ? "a" : "div";
+      const wrapperHref = href ? ` href="${escapeHtml(href)}"` : "";
+      const wrapperClass = href
+        ? "rounded-3xl bg-white/5 border border-white/10 p-4 block hover:border-white/20 hover:bg-white/[0.07] transition"
+        : "rounded-3xl bg-white/5 border border-white/10 p-4";
+      return `
+        <${wrapperTag}${wrapperHref} class="${wrapperClass}">
           <div class="flex gap-3">
             <div class="w-12 h-12 rounded-2xl bg-white/10 border border-white/10 flex items-center justify-center shrink-0">
-              <span class="material-symbols-outlined">${item.type === "follow" ? "person_add" : item.type?.includes("application") ? "task_alt" : "notifications"}</span>
+              <span class="material-symbols-outlined">${notificationIcon(item)}</span>
             </div>
             <div class="flex-1 min-w-0">
-              <p class="font-semibold">${escapeHtml(item.title)}</p>
+              <div class="flex items-start justify-between gap-3">
+                <p class="font-semibold">${escapeHtml(item.title)}</p>
+                ${href ? '<span class="material-symbols-outlined text-white/35 shrink-0">chevron_right</span>' : ""}
+              </div>
               <p class="text-sm text-white/70 mt-1">${escapeHtml(item.body)}</p>
               <div class="flex items-center gap-2 text-xs text-white/45 mt-3">
                 <span class="material-symbols-outlined text-[14px]">schedule</span>
@@ -3814,9 +3867,9 @@ async function initInbox(user, profile) {
               </div>
             </div>
           </div>
-        </div>
-      `,
-    )
+        </${wrapperTag}>
+      `;
+    })
     .join("");
 }
 
