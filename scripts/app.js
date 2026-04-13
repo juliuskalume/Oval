@@ -434,8 +434,54 @@ function serializeOpportunityForCache(opportunity) {
     ...opportunity,
     createdAt: serializeDateForCache(opportunity.createdAt),
     updatedAt: serializeDateForCache(opportunity.updatedAt),
-    deadline: serializeDateForCache(opportunity.deadline),
+    deadlineAt: serializeDateForCache(opportunity.deadlineAt || opportunity.deadline),
+    deadline: serializeDateForCache(opportunity.deadlineAt || opportunity.deadline),
   };
+}
+
+function opportunityDeadline(opportunity) {
+  return toDate(opportunity?.deadlineAt || opportunity?.deadline);
+}
+
+function deadlineExpiryDate(opportunity) {
+  const deadline = opportunityDeadline(opportunity);
+  if (!deadline) {
+    return null;
+  }
+  const hasExplicitTime =
+    deadline.getUTCHours() !== 0
+    || deadline.getUTCMinutes() !== 0
+    || deadline.getUTCSeconds() !== 0
+    || deadline.getUTCMilliseconds() !== 0;
+  if (hasExplicitTime) {
+    return deadline;
+  }
+  return new Date(Date.UTC(
+    deadline.getUTCFullYear(),
+    deadline.getUTCMonth(),
+    deadline.getUTCDate(),
+    23,
+    59,
+    59,
+    999,
+  ));
+}
+
+function isOpportunityExpired(opportunity, now = new Date()) {
+  const expiry = deadlineExpiryDate(opportunity);
+  return Boolean(expiry && expiry.getTime() < now.getTime());
+}
+
+function isOpportunityPubliclyVisible(opportunity, now = new Date()) {
+  if (!opportunity) {
+    return false;
+  }
+  const status = opportunity.status || "published";
+  return status === "published" && !isOpportunityExpired(opportunity, now);
+}
+
+function filterPublicOpportunities(opportunities = [], now = new Date()) {
+  return opportunities.filter((item) => isOpportunityPubliclyVisible(item, now));
 }
 
 function cachedProfileKey(uid) {
@@ -483,7 +529,7 @@ function readCachedPublicOpportunities() {
   if (!Array.isArray(items)) {
     return [];
   }
-  return sortByCreatedAtDesc(items.filter((item) => item && item.id));
+  return sortByCreatedAtDesc(filterPublicOpportunities(items.filter((item) => item && item.id)));
 }
 
 function writeCachedPublicOpportunities(opportunities = []) {
@@ -491,6 +537,7 @@ function writeCachedPublicOpportunities(opportunities = []) {
   const seen = new Set();
   sortByCreatedAtDesc(opportunities)
     .filter((item) => item?.id)
+    .filter((item) => isOpportunityPubliclyVisible(item))
     .forEach((item) => {
       if (seen.has(item.id)) {
         return;
@@ -502,7 +549,7 @@ function writeCachedPublicOpportunities(opportunities = []) {
 }
 
 function upsertCachedPublicOpportunity(opportunity) {
-  if (!opportunity?.id || opportunity.status !== "published") {
+  if (!opportunity?.id || !isOpportunityPubliclyVisible(opportunity)) {
     return;
   }
   const cached = readCachedPublicOpportunities().filter((item) => item.id !== opportunity.id);
@@ -1065,7 +1112,7 @@ async function fetchPublicOpportunitiesFromNetwork() {
   const snapshot = await withTimeout(
     getDocs(query(collection(db, "opportunities"), where("status", "==", "published"))),
   );
-  return sortByCreatedAtDesc(snapshot.docs.map(normalizeOpportunity));
+  return sortByCreatedAtDesc(filterPublicOpportunities(snapshot.docs.map(normalizeOpportunity)));
 }
 
 async function loadPublicOpportunities() {
@@ -1079,7 +1126,7 @@ async function loadPublicOpportunities() {
     if (cached.length) {
       return cached;
     }
-    return (await ensureDemoData()).filter((item) => item.status === "published");
+    return filterPublicOpportunities((await ensureDemoData()).filter((item) => item.status === "published"));
   }
 }
 
@@ -1267,7 +1314,11 @@ async function loadOpportunity(opportunityId, options = {}) {
     const snapshot = await withTimeout(getDoc(doc(db, "opportunities", requestedId)));
     if (snapshot.exists()) {
       const liveOpportunity = normalizeOpportunity(snapshot);
-      upsertCachedPublicOpportunity(liveOpportunity);
+      if (isOpportunityPubliclyVisible(liveOpportunity)) {
+        upsertCachedPublicOpportunity(liveOpportunity);
+      } else {
+        removeCachedOpportunity(liveOpportunity.id);
+      }
       return liveOpportunity;
     }
   } catch (error) {
@@ -3031,6 +3082,13 @@ async function initDetails(user, profile) {
   const status = qs("#detailsStatus");
   const opportunityId = new URLSearchParams(location.search).get("id") || DEMO_OPPORTUNITIES[0].id;
   const opportunity = await loadOpportunity(opportunityId, { fallbackToFirstDemo: opportunityId.startsWith("demo-") });
+  const canViewNonPublicOpportunity = Boolean(
+    opportunity
+    && (
+      profile?.role === "admin"
+      || (user?.uid && opportunity.creatorUid === user.uid)
+    ),
+  );
   if (!opportunity) {
     const shell = qs(".phone");
     if (shell) {
@@ -3039,6 +3097,21 @@ async function initDetails(user, profile) {
           <div class="rounded-3xl bg-white/5 border border-white/10 p-6 max-w-sm">
             <h1 class="text-xl font-semibold">Opportunity unavailable</h1>
             <p class="text-sm text-white/60 mt-3">This post is still pending review or is no longer available publicly.</p>
+            <a href="feed.html" class="inline-flex mt-5 px-4 py-3 rounded-2xl bg-white text-black font-semibold">Back to feed</a>
+          </div>
+        </div>
+      `;
+    }
+    return;
+  }
+  if (!canViewNonPublicOpportunity && !isOpportunityPubliclyVisible(opportunity)) {
+    const shell = qs(".phone");
+    if (shell) {
+      shell.innerHTML = `
+        <div class="min-h-screen flex flex-col items-center justify-center px-6 text-center">
+          <div class="rounded-3xl bg-white/5 border border-white/10 p-6 max-w-sm">
+            <h1 class="text-xl font-semibold">Opportunity unavailable</h1>
+            <p class="text-sm text-white/60 mt-3">This post is no longer available publicly because its deadline has passed or it is no longer live.</p>
             <a href="feed.html" class="inline-flex mt-5 px-4 py-3 rounded-2xl bg-white text-black font-semibold">Back to feed</a>
           </div>
         </div>
@@ -3257,6 +3330,13 @@ async function initComments(user, profile) {
   const targetCommentId = search.get("commentId") || "";
   const opportunity = await loadOpportunity(opportunityId, { fallbackToFirstDemo: opportunityId.startsWith("demo-") });
   const shell = qs(".phone");
+  const canViewNonPublicOpportunity = Boolean(
+    opportunity
+    && (
+      profile?.role === "admin"
+      || (user?.uid && opportunity.creatorUid === user.uid)
+    ),
+  );
 
   if (!opportunity) {
     if (shell) {
@@ -3265,6 +3345,20 @@ async function initComments(user, profile) {
           <div class="rounded-3xl bg-white/5 border border-white/10 p-6 max-w-sm">
             <h1 class="text-xl font-semibold">Comments unavailable</h1>
             <p class="text-sm text-white/60 mt-3">This post is still pending review or is no longer available publicly.</p>
+            <a href="feed.html" class="inline-flex mt-5 px-4 py-3 rounded-2xl bg-white text-black font-semibold">Back to feed</a>
+          </div>
+        </div>
+      `;
+    }
+    return;
+  }
+  if (!canViewNonPublicOpportunity && !isOpportunityPubliclyVisible(opportunity)) {
+    if (shell) {
+      shell.innerHTML = `
+        <div class="min-h-screen flex flex-col items-center justify-center px-6 text-center">
+          <div class="rounded-3xl bg-white/5 border border-white/10 p-6 max-w-sm">
+            <h1 class="text-xl font-semibold">Comments unavailable</h1>
+            <p class="text-sm text-white/60 mt-3">This opportunity is no longer available publicly because its deadline has passed or it is no longer live.</p>
             <a href="feed.html" class="inline-flex mt-5 px-4 py-3 rounded-2xl bg-white text-black font-semibold">Back to feed</a>
           </div>
         </div>
