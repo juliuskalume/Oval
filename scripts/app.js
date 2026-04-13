@@ -2987,7 +2987,7 @@ function renderFeedSlide(opportunity, state = {}) {
   const muted = getFeedVideoMutedPreference();
   const creatorHref = opportunity.creatorUid ? profileUrl(opportunity.creatorUid) : "";
   const creatorName = escapeHtml(opportunity.creatorName || "Oval Creator");
-  const creatorLabel = escapeHtml(opportunity.creatorHandle || opportunity.creatorName || "Oval Creator");
+  const titleLabel = escapeHtml(opportunity.title || "Untitled opportunity");
   return `
     <section class="relative min-h-screen snap-start" data-opportunity-id="${escapeHtml(opportunity.id)}">
       <div class="absolute inset-0 pointer-events-none">
@@ -3033,9 +3033,7 @@ function renderFeedSlide(opportunity, state = {}) {
               <span class="chip text-[11px] px-2.5 py-1 rounded-full">${escapeHtml(opportunity.workMode)}</span>
               <span class="chip text-[11px] px-2.5 py-1 rounded-full">${escapeHtml(opportunity.category)}</span>
             </div>
-            ${creatorHref
-    ? `<a href="${creatorHref}" class="font-semibold text-sm hover:text-white transition">${creatorLabel}</a>`
-    : `<p class="font-semibold text-sm">${creatorLabel}</p>`}
+            <p class="font-semibold text-sm">${titleLabel}</p>
             <p class="text-sm mt-2 leading-5">
               ${escapeHtml(truncateText(opportunity.caption, FEED_CAPTION_LENGTH))}
             </p>
