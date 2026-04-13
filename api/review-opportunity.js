@@ -309,7 +309,7 @@ function keywordOverlap(left, right) {
 async function inspectApplyUrl(url) {
   const verifiedUrl = assertPublicUrl(url);
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 9000);
+  const timeout = setTimeout(() => controller.abort(), 20000);
   try {
     const response = await fetch(verifiedUrl, {
       method: "GET",
