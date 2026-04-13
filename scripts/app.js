@@ -617,6 +617,57 @@ function safeUrl(value) {
   }
 }
 
+function opportunityDraftToFirestorePayload(draft, status) {
+  return {
+    ...draft,
+    deadlineAt: Timestamp.fromDate(new Date(draft.deadlineAt)),
+    status,
+    updatedAt: Timestamp.now(),
+  };
+}
+
+async function submitOpportunityReviewRequest({ user, mode, opportunityId, payload }) {
+  const idToken = await user.getIdToken();
+  let response;
+  try {
+    response = await fetch("/api/review-opportunity", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${idToken}`,
+      },
+      body: JSON.stringify({
+        mode,
+        opportunityId,
+        payload,
+      }),
+    });
+  } catch (error) {
+    return {
+      unavailable: true,
+      reason: error?.message || "Automatic review is unavailable.",
+    };
+  }
+
+  const rawText = await response.text();
+  let data = {};
+  try {
+    data = rawText ? JSON.parse(rawText) : {};
+  } catch (error) {}
+
+  if (!response.ok) {
+    if (response.status === 404 || response.status >= 500 || data?.fallbackEligible) {
+      return {
+        unavailable: true,
+        reason: data?.error || rawText || "Automatic review is unavailable.",
+      };
+    }
+    throw new Error(data?.error || rawText || "Automatic review failed.");
+  }
+
+  return data;
+}
+
 function toneClasses(tone) {
   if (tone === "error") {
     return "bg-red-500/15 text-red-200 border border-red-500/30";
@@ -4187,9 +4238,7 @@ async function initCreatePost(user, profile) {
       const uploadedAttachments = await Promise.all(
         attachmentFiles.map((file) => uploadFile(file, "opportunity-attachments", user.uid)),
       );
-      const nextStatus = editingOpportunity?.status || (profile.role === "admin" ? "published" : "pending");
-
-      const payload = {
+      const draftPayload = {
         title,
         caption,
         applyUrl,
@@ -4200,7 +4249,7 @@ async function initCreatePost(user, profile) {
         deadlineAt: (() => {
           const deadlineValue = String(formData.get("deadlineAt") || "").trim();
           const fallback = new Date(Date.now() + 1000 * 60 * 60 * 24 * 30);
-          return Timestamp.fromDate(deadlineValue ? new Date(deadlineValue) : fallback);
+          return (deadlineValue ? new Date(deadlineValue) : fallback).toISOString();
         })(),
         tags: extractHashtags(caption),
         eligibility: linesFromInput(formData.get("eligibility")),
@@ -4215,16 +4264,86 @@ async function initCreatePost(user, profile) {
         creatorName: profile.displayName,
         creatorHandle: `@${profile.username}`,
         creatorPhotoURL: profile.photoURL || DEFAULT_AVATAR,
-        status: nextStatus,
-        updatedAt: Timestamp.now(),
       };
 
+      if (profile.role !== "admin") {
+        const reviewResult = await submitOpportunityReviewRequest({
+          user,
+          mode: editingOpportunity ? "update" : "create",
+          opportunityId: editingOpportunity?.id || "",
+          payload: draftPayload,
+        });
+
+        if (!reviewResult?.unavailable) {
+          const reviewedStatus = reviewResult?.status || "pending";
+          if (editingOpportunity) {
+            editingOpportunity = {
+              ...editingOpportunity,
+              ...opportunityDraftToFirestorePayload(draftPayload, reviewedStatus),
+              review: reviewResult.review || editingOpportunity.review,
+            };
+            setStatus(
+              status,
+              reviewResult?.message
+                || (
+                  reviewedStatus === "published"
+                    ? "Opportunity updated and remains live."
+                    : "Opportunity updated and sent to admin review."
+                ),
+              reviewedStatus === "published" ? "success" : "info",
+            );
+          } else {
+            form.reset();
+            existingAttachmentsState.length = 0;
+            renderExistingAttachments();
+            syncCaptionCount();
+            if (coverPreviewObjectUrl) {
+              URL.revokeObjectURL(coverPreviewObjectUrl);
+              coverPreviewObjectUrl = "";
+            }
+            paintCoverPreview(DEFAULT_COVER, "image/jpeg");
+            setStatus(
+              status,
+              reviewResult?.message
+                || (
+                  reviewedStatus === "published"
+                    ? "Opportunity approved automatically and is now live."
+                    : "Opportunity submitted for admin review."
+                ),
+              reviewedStatus === "published" ? "success" : "info",
+            );
+          }
+          return;
+        }
+
+        if (editingOpportunity?.status === "published") {
+          throw new Error("Automatic review is unavailable right now, so live posts cannot be edited safely. Try again later.");
+        }
+      }
+
+      const nextStatus = editingOpportunity?.status || (profile.role === "admin" ? "published" : "pending");
+      const payload = opportunityDraftToFirestorePayload(draftPayload, nextStatus);
+      if (profile.role !== "admin") {
+        payload.review = {
+          source: "client-fallback",
+          decision: "manual_review",
+          summary: "Automatic review was unavailable, so this submission was routed to admin review.",
+          confidence: "low",
+          flags: ["Automatic review endpoint unavailable."],
+          checkedAt: Timestamp.now(),
+          urlVerified: false,
+        };
+      }
       if (editingOpportunity?.seeded) {
         payload.seeded = true;
       }
 
       if (editingOpportunity) {
         await updateDoc(doc(db, "opportunities", editingOpportunity.id), payload);
+        editingOpportunity = {
+          ...editingOpportunity,
+          ...payload,
+        };
         setStatus(
           status,
           nextStatus === "pending"
@@ -4438,7 +4557,24 @@ async function initAdminModeration(user, profile) {
     }
 
     list.innerHTML = pendingItems
-      .map((item) => `
+      .map((item) => {
+        const reviewFlags = Array.isArray(item.review?.flags) ? item.review.flags.slice(0, 4) : [];
+        const reviewMeta = item.review
+          ? `
+            <div class="mt-4 rounded-2xl border border-white/10 bg-black/20 p-3">
+              <div class="flex flex-wrap items-center gap-2 text-[11px] text-white/45">
+                <span class="uppercase tracking-[0.22em] text-white/30">Auto review</span>
+                ${item.review?.confidence ? `<span class="chip px-2 py-1 rounded-full">${escapeHtml(item.review.confidence)} confidence</span>` : ""}
+                <span class="chip px-2 py-1 rounded-full">${item.review?.urlVerified ? "URL verified" : "Needs manual URL check"}</span>
+              </div>
+              <p class="text-sm text-white/75 mt-2">${escapeHtml(item.review?.summary || "Awaiting manual review.")}</p>
+              ${reviewFlags.length
+                ? `<div class="mt-3 flex flex-wrap gap-2">${reviewFlags.map((flag) => `<span class="chip px-2 py-1 rounded-full text-[11px]">${escapeHtml(flag)}</span>`).join("")}</div>`
+                : ""}
+            </div>
+          `
+          : "";
+        return `
         <div class="rounded-3xl bg-white/5 border border-white/10 p-4">
           <div class="flex flex-col md:flex-row gap-4">
             ${renderOpportunityMedia(item, "w-full md:w-56 h-40 rounded-2xl object-cover", { muted: true, loop: true, autoplay: true })}
@@ -4456,6 +4592,7 @@ async function initAdminModeration(user, profile) {
                 <span class="chip px-2.5 py-1 rounded-full">${escapeHtml(item.workMode || "Flexible")}</span>
                 <span class="chip px-2.5 py-1 rounded-full">Submitted ${escapeHtml(formatRelativeDate(item.createdAt) || "recently")}</span>
               </div>
+              ${reviewMeta}
               <div class="mt-5 flex flex-wrap gap-2">
                 <a href="${detailsUrl(item.id)}" class="px-4 py-2 rounded-xl bg-white/10 border border-white/10 text-white font-semibold">Preview</a>
                 <button type="button" data-moderation-action="approve" data-id="${escapeHtml(item.id)}" class="px-4 py-2 rounded-xl bg-white text-black font-semibold">Approve</button>
@@ -4465,7 +4602,8 @@ async function initAdminModeration(user, profile) {
             </div>
           </div>
         </div>
-      `)
+      `;
+      })
       .join("");
   }
 

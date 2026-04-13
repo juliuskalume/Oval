@@ -1,6 +1,6 @@
 # Oval
 
-Oval is a mobile-first opportunity discovery app prototype backed by Firebase on the frontend.
+Oval is a mobile-first opportunity discovery app backed by Firebase, with a Vercel serverless moderation endpoint for automatic post review.
 
 ## Included flows
 
@@ -20,9 +20,11 @@ python -m http.server 4173
 
 Then open `http://127.0.0.1:4173`.
 
+This static local server is enough for frontend work, but the AI moderation route only runs when the Vercel serverless function and its environment variables are available.
+
 ## Deploy on Vercel
 
-This project is a plain static site, so it can be deployed to Vercel without a build step.
+This project serves static app files from the repo root and uses a Vercel serverless function for AI-assisted post moderation.
 
 ### Option 1: Deploy from GitHub
 
@@ -30,7 +32,8 @@ This project is a plain static site, so it can be deployed to Vercel without a b
 2. Keep the project as `Other`.
 3. Leave the build command empty.
 4. Leave the output directory empty so Vercel serves the repository root.
-5. Deploy.
+5. Add the environment variables listed below.
+6. Deploy.
 
 ### Option 2: Deploy with Vercel CLI
 
@@ -40,6 +43,18 @@ vercel
 ```
 
 The included [vercel.json](vercel.json) sends `/` to [onboarding.html](onboarding.html) on Vercel.
+
+### Required Vercel environment variables
+
+The auto-approval flow runs in [api/review-opportunity.js](api/review-opportunity.js) and needs:
+
+- `OPENAI_API_KEY`
+- `OVAL_OPENAI_MODEL` (optional, defaults in code)
+- `OVAL_FIREBASE_PROJECT_ID`
+- `OVAL_FIREBASE_CLIENT_EMAIL`
+- `OVAL_FIREBASE_PRIVATE_KEY`
+
+If the moderation endpoint is unavailable, Oval falls back to manual admin review for new submissions. Live post edits by non-admins intentionally do not bypass that server review path.
 
 ## Firebase setup
 

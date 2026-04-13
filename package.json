@@ -1,0 +1,8 @@
+{
+  "name": "oval",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "firebase-admin": "^13.0.1"
+  }
+}
