@@ -12,7 +12,8 @@ const DEFAULT_AVATAR =
 
 const ALLOWED_CATEGORIES = new Set(["Job", "Internship", "Gig", "Scholarship"]);
 const ALLOWED_WORK_MODES = new Set(["Remote", "Hybrid", "On-site", "Remote-friendly", "Global"]);
-const DEFAULT_OPENAI_MODEL = process.env.OVAL_OPENAI_MODEL || process.env.OPENAI_MODEL || "gpt-4.1-mini";
+const GROQ_API_BASE = "https://api.groq.com/openai/v1";
+const DEFAULT_GROQ_MODEL = process.env.OVAL_GROQ_MODEL || process.env.GROQ_MODEL || "llama-3.3-70b-versatile";
 
 class HttpError extends Error {
   constructor(status, message, options = {}) {
@@ -340,8 +341,8 @@ function collectMetadataFlags(payload) {
   return flags;
 }
 
-async function reviewWithOpenAI(payload, inspection, metadataFlags) {
-  const apiKey = process.env.OPENAI_API_KEY;
+async function reviewWithGroq(payload, inspection, metadataFlags) {
+  const apiKey = process.env.GROQ_API_KEY;
   if (!apiKey) {
     return {
       source: "rules",
@@ -349,7 +350,7 @@ async function reviewWithOpenAI(payload, inspection, metadataFlags) {
       decision: "manual_review",
       confidence: "low",
       summary: "AI reviewer is not configured, so this submission was routed to admin review.",
-      reasons: ["OpenAI API key is missing."],
+      reasons: ["Groq API key is missing."],
       flags: metadataFlags,
     };
   }
@@ -383,14 +384,14 @@ async function reviewWithOpenAI(payload, inspection, metadataFlags) {
   };
 
   try {
-    const response = await fetch("https://api.openai.com/v1/chat/completions", {
+    const response = await fetch(`${GROQ_API_BASE}/chat/completions`, {
       method: "POST",
       headers: {
         Authorization: `Bearer ${apiKey}`,
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        model: DEFAULT_OPENAI_MODEL,
+        model: DEFAULT_GROQ_MODEL,
         temperature: 0.1,
         response_format: { type: "json_object" },
         messages: [
@@ -409,7 +410,7 @@ async function reviewWithOpenAI(payload, inspection, metadataFlags) {
 
     if (!response.ok) {
       const errorText = await response.text();
-      throw new Error(errorText || `OpenAI returned HTTP ${response.status}`);
+      throw new Error(errorText || `Groq returned HTTP ${response.status}`);
     }
 
     const data = await response.json();
@@ -419,7 +420,7 @@ async function reviewWithOpenAI(payload, inspection, metadataFlags) {
     const confidence = ["high", "medium", "low"].includes(parsed?.confidence) ? parsed.confidence : "low";
     return {
       source: "ai",
-      model: sanitizeString(data?.model || DEFAULT_OPENAI_MODEL, 80),
+      model: sanitizeString(data?.model || DEFAULT_GROQ_MODEL, 80),
       decision,
       confidence,
       summary: sanitizeString(parsed?.summary || "", 240),
@@ -430,7 +431,7 @@ async function reviewWithOpenAI(payload, inspection, metadataFlags) {
   } catch (error) {
     return {
       source: "rules",
-      model: DEFAULT_OPENAI_MODEL,
+      model: DEFAULT_GROQ_MODEL,
       decision: "manual_review",
       confidence: "low",
       summary: "AI review was unavailable, so this submission was routed to admin review.",
@@ -638,7 +639,7 @@ export default async function handler(request, response) {
     } else {
       const inspection = await inspectApplyUrl(payload.applyUrl);
       const metadataFlags = collectMetadataFlags(payload);
-      const aiReview = await reviewWithOpenAI(payload, inspection, metadataFlags);
+      const aiReview = await reviewWithGroq(payload, inspection, metadataFlags);
       outcome = decideReviewOutcome(payload, inspection, aiReview, metadataFlags);
     }
 

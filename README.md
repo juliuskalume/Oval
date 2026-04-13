@@ -1,6 +1,6 @@
 # Oval
 
-Oval is a mobile-first opportunity discovery app backed by Firebase, with a Vercel serverless moderation endpoint for automatic post review.
+Oval is a mobile-first opportunity discovery app backed by Firebase, with a Vercel serverless moderation endpoint for Groq-assisted automatic post review.
 
 ## Included flows
 
@@ -24,7 +24,7 @@ This static local server is enough for frontend work, but the AI moderation rout
 
 ## Deploy on Vercel
 
-This project serves static app files from the repo root and uses a Vercel serverless function for AI-assisted post moderation.
+This project serves static app files from the repo root and uses a Vercel serverless function for Groq-assisted post moderation.
 
 ### Option 1: Deploy from GitHub
 
@@ -48,8 +48,8 @@ The included [vercel.json](vercel.json) sends `/` to [onboarding.html](onboardin
 
 The auto-approval flow runs in [api/review-opportunity.js](api/review-opportunity.js) and needs:
 
-- `OPENAI_API_KEY`
-- `OVAL_OPENAI_MODEL` (optional, defaults in code)
+- `GROQ_API_KEY`
+- `OVAL_GROQ_MODEL` (optional, defaults in code)
 - `OVAL_FIREBASE_PROJECT_ID`
 - `OVAL_FIREBASE_CLIENT_EMAIL`
 - `OVAL_FIREBASE_PRIVATE_KEY`
