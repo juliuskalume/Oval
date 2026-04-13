@@ -42,6 +42,10 @@ const FEED_BATCH_SIZE = 4;
 const FEED_CACHE_LIMIT = 10;
 const FEED_VIDEO_SOUND_KEY = "oval.feedVideoSoundEnabled";
 const FEED_CACHE_KEY = "oval.feed.publicOpportunities.v1";
+const FEED_GESTURE_COOLDOWN = 650;
+const FEED_TOUCH_THRESHOLD = 50;
+const FEED_WHEEL_THRESHOLD = 12;
+const FEED_VIEWPORT_TRANSITION = "transform 520ms cubic-bezier(0.22, 1, 0.36, 1)";
 const SETTINGS_PREFS_KEY = "oval.settings.preferences";
 const PROFILE_CACHE_PREFIX = "oval.profile.";
 const APP_LOADER_MIN_MS = 220;
@@ -97,6 +101,10 @@ function qs(selector, root = document) {
 
 function qsa(selector, root = document) {
   return Array.from(root.querySelectorAll(selector));
+}
+
+function clampNumber(value, min, max) {
+  return Math.min(max, Math.max(min, value));
 }
 
 function ensureMetaTag(selector, attributes, content) {
@@ -1995,6 +2003,177 @@ function installFeedPullToRefresh(slides, status) {
   });
 }
 
+function installFeedViewportPager(feed, viewport, options = {}) {
+  if (!feed || !viewport) {
+    return null;
+  }
+
+  if (feed._ovalFeedPager) {
+    return feed._ovalFeedPager;
+  }
+
+  let activeIndex = 0;
+  let isAnimating = false;
+  let touchStartY = 0;
+  let touchEndY = 0;
+  let gestureTimeout = 0;
+  let lastGestureAt = 0;
+
+  function getCards() {
+    return Array.from(viewport.querySelectorAll("[data-opportunity-id]"));
+  }
+
+  function getMaxIndex() {
+    return Math.max(0, getCards().length - 1);
+  }
+
+  function clearGestureTimeout() {
+    if (gestureTimeout) {
+      window.clearTimeout(gestureTimeout);
+      gestureTimeout = 0;
+    }
+  }
+
+  function finishGestureCooldown() {
+    clearGestureTimeout();
+    gestureTimeout = window.setTimeout(() => {
+      isAnimating = false;
+      gestureTimeout = 0;
+    }, FEED_GESTURE_COOLDOWN);
+  }
+
+  function snapToIndex(index, snapOptions = {}) {
+    const immediate = snapOptions.immediate === true;
+    const cards = getCards();
+    if (!cards.length) {
+      activeIndex = 0;
+      viewport.style.transform = "translateY(0px)";
+      clearGestureTimeout();
+      isAnimating = false;
+      return;
+    }
+
+    const safeIndex = clampNumber(index, 0, cards.length - 1);
+    const targetCard = cards[safeIndex];
+    if (!targetCard) {
+      return;
+    }
+
+    activeIndex = safeIndex;
+    clearGestureTimeout();
+
+    if (immediate) {
+      viewport.style.transition = "none";
+      viewport.style.transform = `translateY(-${targetCard.offsetTop}px)`;
+      isAnimating = false;
+      options.onActiveIndexChange?.(activeIndex, targetCard, cards);
+      window.requestAnimationFrame(() => {
+        viewport.style.transition = FEED_VIEWPORT_TRANSITION;
+      });
+      return;
+    }
+
+    isAnimating = true;
+    lastGestureAt = Date.now();
+    viewport.style.transform = `translateY(-${targetCard.offsetTop}px)`;
+    options.onActiveIndexChange?.(activeIndex, targetCard, cards);
+    finishGestureCooldown();
+  }
+
+  function canAcceptGesture() {
+    return !isAnimating && (Date.now() - lastGestureAt >= FEED_GESTURE_COOLDOWN);
+  }
+
+  function goNext() {
+    if (!canAcceptGesture()) {
+      return;
+    }
+    snapToIndex(activeIndex + 1);
+  }
+
+  function goPrev() {
+    if (!canAcceptGesture()) {
+      return;
+    }
+    snapToIndex(activeIndex - 1);
+  }
+
+  feed.addEventListener("wheel", (event) => {
+    event.preventDefault();
+    if (!canAcceptGesture()) {
+      return;
+    }
+    if (Math.abs(event.deltaY) < FEED_WHEEL_THRESHOLD) {
+      return;
+    }
+
+    if (event.deltaY > 0) {
+      goNext();
+      return;
+    }
+    goPrev();
+  }, { passive: false });
+
+  feed.addEventListener("touchstart", (event) => {
+    touchStartY = event.changedTouches[0]?.clientY || 0;
+  }, { passive: true });
+
+  feed.addEventListener("touchmove", (event) => {
+    event.preventDefault();
+  }, { passive: false });
+
+  feed.addEventListener("touchend", (event) => {
+    touchEndY = event.changedTouches[0]?.clientY || 0;
+    const deltaY = touchStartY - touchEndY;
+    if (Math.abs(deltaY) < FEED_TOUCH_THRESHOLD || !canAcceptGesture()) {
+      return;
+    }
+
+    if (deltaY > 0) {
+      goNext();
+      return;
+    }
+    goPrev();
+  }, { passive: true });
+
+  window.addEventListener("keydown", (event) => {
+    if ((event.key === "ArrowDown" || event.key === "PageDown") && canAcceptGesture()) {
+      event.preventDefault();
+      goNext();
+    }
+    if ((event.key === "ArrowUp" || event.key === "PageUp") && canAcceptGesture()) {
+      event.preventDefault();
+      goPrev();
+    }
+  });
+
+  window.addEventListener("resize", () => {
+    const cards = getCards();
+    const currentCard = cards[activeIndex];
+    viewport.style.transition = "none";
+    viewport.style.transform = currentCard ? `translateY(-${currentCard.offsetTop}px)` : "translateY(0px)";
+    window.requestAnimationFrame(() => {
+      viewport.style.transition = FEED_VIEWPORT_TRANSITION;
+    });
+  });
+
+  const pager = {
+    refresh(refreshOptions = {}) {
+      const reset = refreshOptions.reset === true;
+      const immediate = refreshOptions.immediate !== false;
+      const nextIndex = reset ? 0 : clampNumber(activeIndex, 0, getMaxIndex());
+      snapToIndex(nextIndex, { immediate });
+    },
+    getActiveIndex() {
+      return activeIndex;
+    },
+    snapToIndex,
+  };
+
+  feed._ovalFeedPager = pager;
+  return pager;
+}
+
 async function completeNativeGoogleSignIn(idToken) {
   const button = qs("#googleContinue");
   const status = qs("#googleStatus");
@@ -2806,10 +2985,13 @@ async function initFeed(user) {
   let followingIdsReady = !user;
   let activeMode = "for-you";
   let activeOpportunities = opportunities;
+  let pager = null;
 
   if (!slides) {
     return;
   }
+
+  const viewport = qs("#feedViewport", slides) || slides;
 
   installFeedPullToRefresh(slides, status);
 
@@ -2837,45 +3019,6 @@ async function initFeed(user) {
     return opportunities.filter((item) => item.creatorUid && followingIds.has(item.creatorUid));
   }
 
-  const observer = new IntersectionObserver(
-    (entries) => {
-      entries.forEach((entry) => {
-        const video = qs("video", entry.target);
-        if (entry.isIntersecting) {
-          const opportunityId = entry.target.dataset.opportunityId;
-          if (opportunityId) {
-            recordView(opportunityId);
-          }
-          if (video) {
-            const muted = getFeedVideoMutedPreference();
-            if (!muted) {
-              muteOtherFeedVideos(slides, video);
-            }
-            video.muted = muted;
-            syncFeedVideoAudioButton(entry.target, muted);
-            video.play().catch(() => {
-              if (!muted) {
-                video.muted = true;
-                syncFeedVideoAudioButton(entry.target, true);
-              }
-            });
-          }
-          const sections = Array.from(slides.children);
-          const sectionIndex = sections.indexOf(entry.target);
-          if (sectionIndex === sections.length - 1) {
-            appendFeedBatch();
-          }
-          return;
-        }
-        if (video) {
-          video.muted = true;
-          video.pause();
-        }
-      });
-    },
-    { root: slides, threshold: 0.65 },
-  );
-
   function appendFeedBatch() {
     if (!activeOpportunities.length) {
       return false;
@@ -2890,10 +3033,7 @@ async function initFeed(user) {
     const newMarkup = batch
       .map((opportunity) => renderFeedSlide(opportunity, states.get(opportunity.id) || {}))
       .join("");
-    slides.insertAdjacentHTML("beforeend", newMarkup);
-    Array.from(slides.children)
-      .slice(-batch.length)
-      .forEach((section) => observer.observe(section));
+    viewport.insertAdjacentHTML("beforeend", newMarkup);
     renderedCount += batch.length;
     return true;
   }
@@ -2908,15 +3048,51 @@ async function initFeed(user) {
     }
   }
 
-  function maybeAppendMore() {
-    const remainingDistance = slides.scrollHeight - slides.scrollTop - slides.clientHeight;
-    if (remainingDistance <= slides.clientHeight * 1.5) {
+  function maybeAppendMore(targetIndex = 0, total = 0) {
+    if (targetIndex >= Math.max(0, total - 3)) {
       appendFeedBatch();
+      ensureFeedBuffer();
+    }
+  }
+
+  function syncActiveFeedSlide(targetSection = null) {
+    const sections = qsa("[data-opportunity-id]", viewport);
+    const activeSection = targetSection || sections[pager?.getActiveIndex() || 0] || null;
+    const muted = getFeedVideoMutedPreference();
+
+    qsa("[data-video-audio-button]", slides).forEach((button) => {
+      paintVideoAudioButton(button, muted);
+    });
+
+    qsa("video", viewport).forEach((video) => {
+      const section = video.closest("[data-opportunity-id]");
+      if (!section || section !== activeSection) {
+        video.muted = true;
+        video.pause();
+        return;
+      }
+
+      if (!muted) {
+        muteOtherFeedVideos(viewport, video);
+      }
+      video.muted = muted;
+      syncFeedVideoAudioButton(section, muted);
+      video.play().catch(() => {
+        if (!muted) {
+          video.muted = true;
+          syncFeedVideoAudioButton(section, true);
+        }
+      });
+    });
+
+    const opportunityId = activeSection?.dataset.opportunityId;
+    if (opportunityId) {
+      recordView(opportunityId);
     }
   }
 
   function renderFeedEmpty(message) {
-    slides.innerHTML = `
+    viewport.innerHTML = `
       <section class="min-h-screen flex items-center justify-center px-6">
         <div class="rounded-3xl bg-white/5 border border-white/10 p-6 text-center max-w-sm">
           <h2 class="text-lg font-semibold">Nothing here yet</h2>
@@ -2928,8 +3104,7 @@ async function initFeed(user) {
 
   function rebuildFeed(options = {}) {
     const loading = options.loading === true;
-    Array.from(slides.children).forEach((section) => observer.unobserve(section));
-    slides.innerHTML = "";
+    viewport.innerHTML = "";
     renderedCount = 0;
     activeOpportunities = selectedOpportunities();
     paintModeButtons();
@@ -2941,6 +3116,7 @@ async function initFeed(user) {
           ? "Loading live posts..."
           : "New submissions will appear here after admin approval.",
       );
+      pager?.refresh({ reset: true, immediate: true });
       return;
     }
     if (!activeOpportunities.length) {
@@ -2951,11 +3127,13 @@ async function initFeed(user) {
             : "Sign in to see posts from accounts you follow."
           : "No live posts yet.",
       );
+      pager?.refresh({ reset: true, immediate: true });
       return;
     }
 
     appendFeedBatch();
     ensureFeedBuffer();
+    pager?.refresh({ reset: true, immediate: true });
   }
 
   function hydrateFeedStates(nextStates) {
@@ -2973,6 +3151,13 @@ async function initFeed(user) {
   }
 
   await bindOpportunityActionButtons(slides, () => opportunities, states, user, status);
+
+  pager = installFeedViewportPager(slides, viewport, {
+    onActiveIndexChange(index, section, sections) {
+      maybeAppendMore(index, sections.length);
+      syncActiveFeedSlide(section);
+    },
+  });
 
   modeButtons.forEach((button) => {
     button.addEventListener("click", async () => {
@@ -3021,7 +3206,6 @@ async function initFeed(user) {
       );
     }
   });
-  slides.addEventListener("scroll", maybeAppendMore, { passive: true });
   paintModeButtons();
   rebuildFeed({ loading: !opportunities.length });
 

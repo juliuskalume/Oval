@@ -15,6 +15,23 @@
     .hide-scrollbar::-webkit-scrollbar { display: none; }
     .hide-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
     .material-symbols-outlined { font-variation-settings: 'FILL' 0, 'wght' 500, 'GRAD' 0, 'opsz' 24; }
+    .feed-shell {
+      height: 100vh;
+      overflow: hidden;
+      scrollbar-width: none;
+      background: #000;
+      overscroll-behavior: none;
+      touch-action: none;
+      scroll-behavior: smooth;
+      position: relative;
+    }
+    .feed-shell::-webkit-scrollbar { display: none; }
+    .feed-viewport {
+      width: 100%;
+      min-height: 100vh;
+      transition: transform 520ms cubic-bezier(0.22, 1, 0.36, 1);
+      will-change: transform;
+    }
   </style>
   <link rel="stylesheet" href="styles/theme.css" />
 </head>
@@ -33,7 +50,9 @@
       </div>
     </div>
 
-    <div id="feedSlides" class="h-screen overflow-y-auto snap-y snap-mandatory hide-scrollbar"></div>
+    <main id="feedSlides" class="feed-shell hide-scrollbar">
+      <div id="feedViewport" class="feed-viewport"></div>
+    </main>
 
     <div id="feedStatus" class="hidden absolute left-4 right-4 z-40 safe-feed-status"></div>
 
