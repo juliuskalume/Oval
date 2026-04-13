@@ -59,6 +59,7 @@ const ATTACHMENT_MAX_BYTES = 5 * MB;
 const ATTACHMENT_MAX_COUNT = 5;
 const VIDEO_MODERATION_FRAME_MAX_DIMENSION = 960;
 const VIDEO_MODERATION_FRAME_QUALITY = 0.72;
+const FEED_LIKE_ICON_ASSET = "assets/icons/instagram-like.png";
 const TAP_HAPTIC_SELECTOR = [
   'a[href]',
   'button',
@@ -2931,12 +2932,19 @@ function paintAppliedActionButton(button, applied) {
   button.textContent = applied ? "Applied" : "Mark Applied";
 }
 
+function feedLikeIconMarkup(liked) {
+  if (liked) {
+    return `<img src="${escapeHtml(FEED_LIKE_ICON_ASSET)}" class="w-[30px] h-[30px] object-contain" alt="" aria-hidden="true">`;
+  }
+  return `<span class="material-symbols-outlined text-[30px] text-white" style="font-variation-settings: 'FILL' 0, 'wght' 500, 'GRAD' 0, 'opsz' 24;">favorite</span>`;
+}
+
 function paintLikeActionButton(button, liked, likesCount) {
   if (!button) {
     return;
   }
   button.innerHTML = `
-    <span class="material-symbols-outlined text-[30px] ${liked ? "text-rose-300" : "text-white"}" style="font-variation-settings: 'FILL' ${liked ? 1 : 0}, 'wght' 500, 'GRAD' 0, 'opsz' 24;">${liked ? "favorite" : "favorite"}</span>
+    ${feedLikeIconMarkup(liked)}
     <span class="text-xs mt-1 ${liked ? "text-rose-200" : ""}">${escapeHtml(formatCompact(likesCount || 0))}</span>
   `;
 }
@@ -3004,7 +3012,7 @@ function renderFeedSlide(opportunity, state = {}) {
             <img src="${escapeHtml(creatorAvatar(opportunity))}" class="w-12 h-12 rounded-full border-2 border-white object-cover" alt="${creatorName}">
           </div>`}
           <button type="button" class="flex flex-col items-center" data-action="toggle-like" data-id="${escapeHtml(opportunity.id)}">
-            <span class="material-symbols-outlined text-[30px] ${state.liked ? "text-rose-300" : "text-white"}" style="font-variation-settings: 'FILL' ${state.liked ? 1 : 0}, 'wght' 500, 'GRAD' 0, 'opsz' 24;">favorite</span>
+            ${feedLikeIconMarkup(Boolean(state.liked))}
             <span class="text-xs mt-1 ${state.liked ? "text-rose-200" : ""}">${escapeHtml(formatCompact(opportunity.likesCount || 0))}</span>
           </button>
           <a href="${commentsUrl(opportunity.id)}" class="flex flex-col items-center">

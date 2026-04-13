@@ -1,4 +1,4 @@
-const CACHE_VERSION = "v25";
+const CACHE_VERSION = "v26";
 const STATIC_CACHE = `oval-static-${CACHE_VERSION}`;
 const RUNTIME_CACHE = `oval-runtime-${CACHE_VERSION}`;
 const OFFLINE_URL = "./offline.html";
@@ -27,6 +27,7 @@ const APP_SHELL_FILES = [
   "./scripts/firebase.js",
   "./scripts/sample-data.js",
   "./assets/fonts/material-symbols-outlined.woff2",
+  "./assets/icons/instagram-like.png",
   "./assets/pwa/icon-any-192.png",
   "./assets/pwa/icon-any-512.png",
   "./assets/pwa/icon-maskable-192.png",
