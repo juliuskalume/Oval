@@ -42,6 +42,13 @@ const FEED_BATCH_SIZE = 4;
 const FEED_CACHE_LIMIT = 10;
 const FEED_VIDEO_SOUND_KEY = "oval.feedVideoSoundEnabled";
 const FEED_CACHE_KEY = "oval.feed.publicOpportunities.v1";
+const FEED_MAX_FLING_VELOCITY = 1000;
+const FEED_MIN_FLING_VELOCITY = 180;
+const FEED_TOUCH_SLOP = 8;
+const FEED_AXIS_LOCK = 26;
+const FEED_SNAP_DISTANCE_RATIO = 0.16;
+const FEED_WHEEL_IDLE_MS = 56;
+const FEED_VELOCITY_SAMPLE_WINDOW_MS = 140;
 const SETTINGS_PREFS_KEY = "oval.settings.preferences";
 const PROFILE_CACHE_PREFIX = "oval.profile.";
 const APP_LOADER_MIN_MS = 220;
@@ -97,6 +104,10 @@ function qs(selector, root = document) {
 
 function qsa(selector, root = document) {
   return Array.from(root.querySelectorAll(selector));
+}
+
+function clampNumber(value, min, max) {
+  return Math.min(max, Math.max(min, value));
 }
 
 function ensureMetaTag(selector, attributes, content) {
@@ -1995,6 +2006,283 @@ function installFeedPullToRefresh(slides, status) {
   });
 }
 
+function installFeedVelocityGovernor(slides) {
+  if (!slides || slides.dataset.velocityGovernorBound === "1") {
+    return;
+  }
+
+  // Native fling momentum cannot be clamped pre-scroll, so the feed uses a governed gesture layer.
+  slides.dataset.velocityGovernorBound = "1";
+  slides.classList.add("feed-velocity-governed");
+
+  let animationFrame = 0;
+  let touchState = null;
+  let wheelState = null;
+  let wheelIdleTimer = 0;
+
+  function stopAnimation() {
+    if (animationFrame) {
+      window.cancelAnimationFrame(animationFrame);
+      animationFrame = 0;
+    }
+  }
+
+  function feedSections() {
+    return Array.from(slides.children);
+  }
+
+  function nearestSectionIndex(scrollTop = slides.scrollTop) {
+    const sections = feedSections();
+    if (!sections.length) {
+      return 0;
+    }
+
+    let nearestIndex = 0;
+    let nearestDistance = Number.POSITIVE_INFINITY;
+    sections.forEach((section, index) => {
+      const distance = Math.abs(section.offsetTop - scrollTop);
+      if (distance < nearestDistance) {
+        nearestDistance = distance;
+        nearestIndex = index;
+      }
+    });
+    return nearestIndex;
+  }
+
+  function boundedScrollTop(value) {
+    const maxScrollTop = Math.max(0, slides.scrollHeight - slides.clientHeight);
+    return clampNumber(value, 0, maxScrollTop);
+  }
+
+  function recentVelocity(samples) {
+    if (samples.length < 2) {
+      return 0;
+    }
+
+    const latest = samples[samples.length - 1];
+    let startIndex = samples.length - 2;
+    while (startIndex > 0 && latest.time - samples[startIndex - 1].time <= FEED_VELOCITY_SAMPLE_WINDOW_MS) {
+      startIndex -= 1;
+    }
+
+    const first = samples[startIndex];
+    const elapsed = latest.time - first.time;
+    if (elapsed < 16) {
+      return 0;
+    }
+
+    return ((latest.position - first.position) / elapsed) * 1000;
+  }
+
+  function animateFeedTo(targetTop, requestedVelocity) {
+    const startTop = slides.scrollTop;
+    const boundedTargetTop = boundedScrollTop(targetTop);
+    const distance = boundedTargetTop - startTop;
+    if (Math.abs(distance) < 1) {
+      slides.scrollTop = boundedTargetTop;
+      return;
+    }
+
+    stopAnimation();
+
+    const distanceAbs = Math.abs(distance);
+    const initialVelocity = clampNumber(Math.abs(requestedVelocity) || 620, 120, FEED_MAX_FLING_VELOCITY);
+    const durationSeconds = clampNumber(distanceAbs / initialVelocity, 0.18, 0.7);
+    const startSlope = initialVelocity * durationSeconds;
+    const direction = Math.sign(distance);
+    const startedAt = performance.now();
+
+    function step(now) {
+      const elapsedSeconds = Math.min(durationSeconds, (now - startedAt) / 1000);
+      const progress = durationSeconds === 0 ? 1 : elapsedSeconds / durationSeconds;
+      const progressSquared = progress * progress;
+      const progressCubed = progressSquared * progress;
+      const displacement =
+        ((-2 * progressCubed) + (3 * progressSquared)) * distanceAbs
+        + (progressCubed - (2 * progressSquared) + progress) * startSlope;
+
+      slides.scrollTop = startTop + (direction * displacement);
+
+      if (progress < 1) {
+        animationFrame = window.requestAnimationFrame(step);
+        return;
+      }
+
+      slides.scrollTop = boundedTargetTop;
+      animationFrame = 0;
+    }
+
+    animationFrame = window.requestAnimationFrame(step);
+  }
+
+  function settleFeed(anchorIndex, direction, rawVelocity) {
+    const sections = feedSections();
+    if (!sections.length) {
+      return;
+    }
+
+    const safeAnchorIndex = clampNumber(anchorIndex, 0, sections.length - 1);
+    const nextIndex = direction === 0
+      ? nearestSectionIndex()
+      : clampNumber(safeAnchorIndex + direction, 0, sections.length - 1);
+    const targetTop = sections[nextIndex]?.offsetTop ?? 0;
+    const governedVelocity = clampNumber(Math.abs(rawVelocity) || 620, 0, FEED_MAX_FLING_VELOCITY);
+    animateFeedTo(targetTop, governedVelocity);
+  }
+
+  slides.addEventListener("touchstart", (event) => {
+    if (event.touches.length !== 1) {
+      touchState = null;
+      return;
+    }
+
+    stopAnimation();
+
+    const touch = event.touches[0];
+    const startIndex = nearestSectionIndex();
+    const sections = feedSections();
+    const lowerBound = sections[startIndex - 1]?.offsetTop ?? sections[startIndex]?.offsetTop ?? 0;
+    const upperBound = sections[startIndex + 1]?.offsetTop ?? sections[startIndex]?.offsetTop ?? 0;
+    const now = performance.now();
+
+    touchState = {
+      lock: "",
+      startX: touch.clientX,
+      startY: touch.clientY,
+      lastY: touch.clientY,
+      startScrollTop: slides.scrollTop,
+      startIndex,
+      lowerBound,
+      upperBound,
+      samples: [{ position: slides.scrollTop, time: now }],
+    };
+  }, { passive: true });
+
+  slides.addEventListener("touchmove", (event) => {
+    if (!touchState || event.touches.length !== 1) {
+      return;
+    }
+
+    const touch = event.touches[0];
+    const deltaX = touch.clientX - touchState.startX;
+    const deltaY = touch.clientY - touchState.startY;
+
+    if (!touchState.lock) {
+      if (Math.abs(deltaX) < FEED_TOUCH_SLOP && Math.abs(deltaY) < FEED_TOUCH_SLOP) {
+        return;
+      }
+      touchState.lock = Math.abs(deltaY) > Math.max(FEED_AXIS_LOCK, Math.abs(deltaX)) ? "vertical" : "horizontal";
+      if (touchState.lock !== "vertical") {
+        touchState = null;
+        return;
+      }
+    }
+
+    if (touchState.lock !== "vertical") {
+      return;
+    }
+
+    event.preventDefault();
+
+    const unclampedTop = touchState.startScrollTop - deltaY;
+    const nextScrollTop = clampNumber(unclampedTop, touchState.lowerBound, touchState.upperBound);
+    slides.scrollTop = boundedScrollTop(nextScrollTop);
+    touchState.lastY = touch.clientY;
+
+    const now = performance.now();
+    touchState.samples.push({ position: slides.scrollTop, time: now });
+    touchState.samples = touchState.samples.filter((sample) => now - sample.time <= FEED_VELOCITY_SAMPLE_WINDOW_MS);
+  }, { passive: false });
+
+  function finishTouchGesture() {
+    if (!touchState) {
+      return;
+    }
+
+    const activeTouch = touchState;
+    touchState = null;
+
+    if (activeTouch.lock !== "vertical") {
+      return;
+    }
+
+    const deltaScroll = slides.scrollTop - activeTouch.startScrollTop;
+    const velocity = recentVelocity(activeTouch.samples);
+    const movedFarEnough = Math.abs(deltaScroll) >= slides.clientHeight * FEED_SNAP_DISTANCE_RATIO;
+    const flung = Math.abs(velocity) >= FEED_MIN_FLING_VELOCITY;
+    const direction = flung
+      ? Math.sign(velocity)
+      : movedFarEnough
+        ? Math.sign(deltaScroll)
+        : 0;
+
+    settleFeed(activeTouch.startIndex, direction, velocity);
+  }
+
+  slides.addEventListener("touchend", finishTouchGesture, { passive: true });
+  slides.addEventListener("touchcancel", () => {
+    stopAnimation();
+    if (!touchState) {
+      return;
+    }
+    settleFeed(touchState.startIndex, 0, 0);
+    touchState = null;
+  }, { passive: true });
+
+  function flushWheelGesture() {
+    if (!wheelState) {
+      return;
+    }
+
+    const activeWheelState = wheelState;
+    wheelState = null;
+    if (wheelIdleTimer) {
+      window.clearTimeout(wheelIdleTimer);
+      wheelIdleTimer = 0;
+    }
+
+    const velocity = recentVelocity(activeWheelState.samples);
+    const direction = Math.sign(activeWheelState.totalDelta || velocity);
+    if (!direction) {
+      settleFeed(activeWheelState.startIndex, 0, 0);
+      return;
+    }
+    settleFeed(activeWheelState.startIndex, direction, velocity);
+  }
+
+  slides.addEventListener("wheel", (event) => {
+    if (Math.abs(event.deltaY) <= Math.abs(event.deltaX) || event.deltaY === 0) {
+      return;
+    }
+
+    event.preventDefault();
+    stopAnimation();
+
+    const now = performance.now();
+    if (!wheelState || now - wheelState.lastEventAt > FEED_WHEEL_IDLE_MS) {
+      wheelState = {
+        startIndex: nearestSectionIndex(),
+        totalDelta: 0,
+        lastEventAt: now,
+        samples: [{ position: 0, time: now }],
+      };
+    }
+
+    wheelState.totalDelta += event.deltaY;
+    wheelState.lastEventAt = now;
+    wheelState.samples.push({
+      position: wheelState.totalDelta,
+      time: now,
+    });
+    wheelState.samples = wheelState.samples.filter((sample) => now - sample.time <= FEED_VELOCITY_SAMPLE_WINDOW_MS);
+
+    if (wheelIdleTimer) {
+      window.clearTimeout(wheelIdleTimer);
+    }
+    wheelIdleTimer = window.setTimeout(flushWheelGesture, FEED_WHEEL_IDLE_MS);
+  }, { passive: false });
+}
+
 async function completeNativeGoogleSignIn(idToken) {
   const button = qs("#googleContinue");
   const status = qs("#googleStatus");
@@ -2812,6 +3100,7 @@ async function initFeed(user) {
   }
 
   installFeedPullToRefresh(slides, status);
+  installFeedVelocityGovernor(slides);
 
   let renderedCount = 0;
 
