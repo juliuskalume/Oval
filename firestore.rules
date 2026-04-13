@@ -29,7 +29,11 @@ service cloud.firestore {
     }
 
     function validOpportunityStatus(value) {
-      return value == 'pending' || value == 'published' || value == 'archived';
+      return value == 'draft' || value == 'pending' || value == 'published' || value == 'archived';
+    }
+
+    function ownerEditableOpportunityStatus(value) {
+      return value == 'draft' || value == 'pending';
     }
 
     function validOpportunityCounters() {
@@ -247,7 +251,8 @@ service cloud.firestore {
         && request.resource.data.creatorUid == request.auth.uid
         && validOpportunityStatus(request.resource.data.status)
         && (
-          request.resource.data.status == 'pending'
+          request.resource.data.status == 'draft'
+          || request.resource.data.status == 'pending'
           || (isAdmin() && request.resource.data.status == 'published')
         );
 
@@ -256,7 +261,13 @@ service cloud.firestore {
           signedIn()
           && resource.data.creatorUid == request.auth.uid
           && request.resource.data.creatorUid == resource.data.creatorUid
-          && request.resource.data.status == resource.data.status
+          && (
+            request.resource.data.status == resource.data.status
+            || (
+              ownerEditableOpportunityStatus(resource.data.status)
+              && ownerEditableOpportunityStatus(request.resource.data.status)
+            )
+          )
         )
         || (
           signedIn()

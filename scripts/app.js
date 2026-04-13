@@ -1043,6 +1043,12 @@ function ensureDemoData() {
 }
 
 function statusMeta(status) {
+  if (status === "draft") {
+    return {
+      label: "Draft",
+      classes: "bg-slate-500/15 text-slate-200 border border-slate-400/30",
+    };
+  }
   if (status === "pending") {
     return {
       label: "Pending review",
@@ -4461,11 +4467,17 @@ async function initCreatePost(user, profile) {
   const form = qs("#createPostForm");
   const status = qs("#createPostStatus");
   const submit = qs("#publishOpportunityButton");
+  const saveDraftButton = qs("#saveDraftButton");
   const deleteButton = qs("#deleteOpportunityButton");
   const coverPreview = qs("#coverPreview");
   const captionInput = qs("#caption");
   const captionCount = qs("#captionCount");
   const existingAttachmentsWrap = qs("#existingAttachments");
+  const bulkImportJson = qs("#bulkImportJson");
+  const bulkImportFile = qs("#bulkImportFile");
+  const bulkImportButton = qs("#bulkImportButton");
+  const bulkImportStatus = qs("#bulkImportStatus");
+  const bulkImportResults = qs("#bulkImportResults");
   const existingAttachmentsState = [];
   const editId = new URLSearchParams(location.search).get("id");
   let editingOpportunity = null;
@@ -4479,9 +4491,281 @@ async function initCreatePost(user, profile) {
     captionCount.textContent = `${currentLength}/${MAX_CAPTION_LENGTH}`;
   }
 
-  if (submit) {
-    submit.textContent = profile.role === "admin" ? "Publish opportunity" : "Submit for review";
+  function renderBulkImportResults(items = []) {
+    if (!bulkImportResults) {
+      return;
+    }
+    bulkImportResults.innerHTML = items
+      .map(
+        (item) => `
+          <a href="create-post.html?id=${encodeURIComponent(item.id)}" class="flex items-center justify-between gap-3 rounded-2xl border border-white/10 bg-white/5 px-4 py-3">
+            <div class="min-w-0">
+              <p class="text-sm font-medium truncate">${escapeHtml(item.title)}</p>
+              <p class="text-xs text-white/50 mt-1">Saved as draft</p>
+            </div>
+            <span class="material-symbols-outlined text-white/60">edit</span>
+          </a>
+        `,
+      )
+      .join("");
+    bulkImportResults.classList.toggle("hidden", !items.length);
   }
+
+  function setBulkStatus(message, tone = "info") {
+    setStatus(bulkImportStatus, message, tone);
+  }
+
+  function resetComposerForm() {
+    form.reset();
+    existingAttachmentsState.length = 0;
+    renderExistingAttachments();
+    syncCaptionCount();
+    if (coverPreviewObjectUrl) {
+      URL.revokeObjectURL(coverPreviewObjectUrl);
+      coverPreviewObjectUrl = "";
+    }
+    paintCoverPreview(DEFAULT_COVER, "image/jpeg");
+    const allowCommentsInput = qs("#allowComments");
+    if (allowCommentsInput) {
+      allowCommentsInput.checked = true;
+    }
+  }
+
+  function normalizeChoice(value, allowed, fallback) {
+    const raw = String(value || "").trim();
+    if (!raw) {
+      return fallback;
+    }
+    const directMatch = Array.from(allowed).find((item) => item === raw);
+    if (directMatch) {
+      return directMatch;
+    }
+    const lower = raw.toLowerCase();
+    return Array.from(allowed).find((item) => item.toLowerCase() === lower) || fallback;
+  }
+
+  function stripJsonCodeFence(value) {
+    return String(value || "")
+      .trim()
+      .replace(/^```(?:json)?\s*/i, "")
+      .replace(/\s*```$/i, "")
+      .trim();
+  }
+
+  function unwrapImportedUrl(value) {
+    const text = String(value || "").trim();
+    const markdownMatch = text.match(/^\[[^\]]*\]\((https?:\/\/[^)\s]+)\)$/i);
+    return markdownMatch ? markdownMatch[1] : text;
+  }
+
+  function normalizeListInput(value) {
+    if (Array.isArray(value)) {
+      return value
+        .map((item) => String(item || "").trim())
+        .filter(Boolean);
+    }
+    return linesFromInput(value);
+  }
+
+  function normalizeImportedAttachments(value) {
+    if (!Array.isArray(value)) {
+      return [];
+    }
+    return value
+      .map((item, index) => {
+        if (typeof item === "string") {
+          const url = safeUrl(unwrapImportedUrl(item));
+          if (!url) {
+            return null;
+          }
+          return {
+            name: `Attachment ${index + 1}`,
+            url,
+            kind: "link",
+          };
+        }
+        if (!item || typeof item !== "object") {
+          return null;
+        }
+        const url = safeUrl(unwrapImportedUrl(item.url || item.href || ""));
+        if (!url) {
+          return null;
+        }
+        return {
+          name: String(item.name || `Attachment ${index + 1}`).trim() || `Attachment ${index + 1}`,
+          url,
+          kind: String(item.kind || "link").trim() || "link",
+        };
+      })
+      .filter(Boolean);
+  }
+
+  function baseOpportunityDraftPayload({
+    title,
+    caption,
+    applyUrl,
+    category,
+    locationLabel,
+    workMode,
+    payLabel,
+    deadlineAt,
+    eligibility,
+    responsibilities,
+    requirements,
+    perks,
+    aboutCompany,
+    allowComments,
+    media,
+    attachments,
+  }) {
+    return {
+      title,
+      caption,
+      applyUrl,
+      category,
+      locationLabel,
+      workMode,
+      payLabel,
+      deadlineAt,
+      tags: extractHashtags(caption),
+      eligibility,
+      responsibilities,
+      requirements,
+      perks,
+      aboutCompany,
+      allowComments,
+      media,
+      attachments,
+      creatorUid: user.uid,
+      creatorName: profile.displayName,
+      creatorHandle: `@${profile.username}`,
+      creatorPhotoURL: profile.photoURL || DEFAULT_AVATAR,
+    };
+  }
+
+  function normalizeDeadlineValue(rawValue) {
+    const fallback = new Date(Date.now() + 1000 * 60 * 60 * 24 * 30);
+    const candidate = String(rawValue || "").trim();
+    const nextDate = candidate ? new Date(candidate) : fallback;
+    if (Number.isNaN(nextDate.getTime())) {
+      return fallback.toISOString();
+    }
+    return nextDate.toISOString();
+  }
+
+  function createFormDraftPayload(formData, media, attachments) {
+    const title = String(formData.get("title") || "").trim();
+    const caption = String(formData.get("caption") || "").trim();
+    const applyUrl = safeUrl(String(formData.get("applyUrl") || "").trim());
+    if (!title || !caption || !applyUrl) {
+      throw new Error("Title, description, and details URL are required.");
+    }
+    if (caption.length > MAX_CAPTION_LENGTH) {
+      throw new Error(`Descriptions can be up to ${MAX_CAPTION_LENGTH} characters.`);
+    }
+    return baseOpportunityDraftPayload({
+      title,
+      caption,
+      applyUrl,
+      category: String(formData.get("category") || "Internship"),
+      locationLabel: String(formData.get("locationLabel") || "").trim(),
+      workMode: String(formData.get("workMode") || "Remote"),
+      payLabel: String(formData.get("payLabel") || "").trim(),
+      deadlineAt: normalizeDeadlineValue(formData.get("deadlineAt")),
+      eligibility: linesFromInput(formData.get("eligibility")),
+      responsibilities: linesFromInput(formData.get("responsibilities")),
+      requirements: linesFromInput(formData.get("requirements")),
+      perks: linesFromInput(formData.get("perks")),
+      aboutCompany: String(formData.get("aboutCompany") || "").trim(),
+      allowComments: Boolean(formData.get("allowComments")),
+      media,
+      attachments,
+    });
+  }
+
+  function createImportedDraftPayload(rawPost) {
+    if (!rawPost || typeof rawPost !== "object") {
+      throw new Error("Each imported post must be an object.");
+    }
+    const title = String(rawPost.title || "").trim();
+    const caption = String(rawPost.description || rawPost.caption || "").trim();
+    const applyUrl = safeUrl(unwrapImportedUrl(rawPost.detailsUrl || rawPost.applyUrl || ""));
+    if (!title || !caption || !applyUrl) {
+      throw new Error("Each imported post needs a title, description, and detailsUrl.");
+    }
+    if (caption.length > MAX_CAPTION_LENGTH) {
+      throw new Error(`"${title}" is over the ${MAX_CAPTION_LENGTH}-character description limit.`);
+    }
+    return baseOpportunityDraftPayload({
+      title,
+      caption,
+      applyUrl,
+      category: normalizeChoice(rawPost.category, new Set(["Job", "Internship", "Gig", "Scholarship"]), "Job"),
+      locationLabel: String(rawPost.location || rawPost.locationLabel || "").trim(),
+      workMode: normalizeChoice(rawPost.workStyle || rawPost.workMode, new Set(["Remote", "Hybrid", "On-site", "Remote-friendly", "Global"]), "Remote"),
+      payLabel: String(rawPost.compensation || rawPost.payLabel || "").trim(),
+      deadlineAt: normalizeDeadlineValue(rawPost.deadline || rawPost.deadlineAt),
+      eligibility: normalizeListInput(rawPost.eligibility),
+      responsibilities: normalizeListInput(rawPost.responsibilities),
+      requirements: normalizeListInput(rawPost.requirements),
+      perks: normalizeListInput(rawPost.perks),
+      aboutCompany: String(rawPost.aboutCompany || "").trim(),
+      allowComments: rawPost.allowComments !== false,
+      media: { url: DEFAULT_COVER, alt: title, kind: "image/jpeg" },
+      attachments: normalizeImportedAttachments(rawPost.attachments),
+    });
+  }
+
+  async function createDraftDocument(draftPayload) {
+    const payload = {
+      ...opportunityDraftToFirestorePayload(draftPayload, "draft"),
+      createdAt: Timestamp.now(),
+      viewsCount: 0,
+      savesCount: 0,
+      appliedCount: 0,
+      commentsCount: 0,
+      likesCount: 0,
+    };
+    const refResult = await addDoc(collection(db, "opportunities"), payload);
+    return {
+      id: refResult.id,
+      title: draftPayload.title,
+    };
+  }
+
+  function parseBulkImportPosts(rawText) {
+    const parsed = JSON.parse(stripJsonCodeFence(rawText));
+    if (Array.isArray(parsed)) {
+      return parsed;
+    }
+    if (Array.isArray(parsed?.posts)) {
+      return parsed.posts;
+    }
+    if (parsed && typeof parsed === "object") {
+      return [parsed];
+    }
+    throw new Error("The JSON must be an object, an array, or an object with a posts array.");
+  }
+
+  function paintCreateActions() {
+    const editingDraft = editingOpportunity?.status === "draft";
+    if (saveDraftButton) {
+      saveDraftButton.classList.toggle("hidden", Boolean(editingOpportunity && !editingDraft));
+      saveDraftButton.textContent = "Save draft";
+    }
+    if (!submit) {
+      return;
+    }
+    if (!editingOpportunity) {
+      submit.textContent = profile.role === "admin" ? "Publish opportunity" : "Submit for review";
+      return;
+    }
+    submit.textContent = editingDraft
+      ? (profile.role === "admin" ? "Publish opportunity" : "Submit for review")
+      : "Save changes";
+  }
+
+  paintCreateActions();
 
   function paintCoverPreview(url, kind, title = "Cover preview") {
     if (!coverPreview) {
@@ -4516,11 +4800,13 @@ async function initCreatePost(user, profile) {
       setStatus(status, "You cannot edit this opportunity.", "error");
       return;
     }
-    setText("#createPostHeading", "Edit post");
-    setText("#createPostSubheading", "Update the opportunity details and save the changes.");
-    if (submit) {
-      submit.textContent = "Save changes";
-    }
+    setText("#createPostHeading", editingOpportunity.status === "draft" ? "Edit draft" : "Edit post");
+    setText(
+      "#createPostSubheading",
+      editingOpportunity.status === "draft"
+        ? "Update the draft, then submit it when you are ready."
+        : "Update the opportunity details and save the changes.",
+    );
     qs("#title").value = editingOpportunity.title || "";
     qs("#caption").value = editingOpportunity.caption || "";
     qs("#applyUrl").value = editingOpportunity.applyUrl || "";
@@ -4541,6 +4827,7 @@ async function initCreatePost(user, profile) {
     if (deleteButton && canDeleteOpportunity(editingOpportunity, user, profile)) {
       deleteButton.classList.remove("hidden");
     }
+    paintCreateActions();
   }
 
   if (!editingOpportunity) {
@@ -4588,61 +4875,125 @@ async function initCreatePost(user, profile) {
     paintCoverPreview(coverPreviewObjectUrl, file.type, file.name || "Cover preview");
   });
 
+  bulkImportFile?.addEventListener("change", async (event) => {
+    const file = event.target.files?.[0];
+    if (!file || !bulkImportJson) {
+      return;
+    }
+    try {
+      bulkImportJson.value = await file.text();
+      setBulkStatus(`Loaded ${file.name}. Review it, then import to drafts.`, "info");
+    } catch (error) {
+      console.error(error);
+      setBulkStatus("That JSON file could not be read.", "error");
+    }
+  });
+
+  bulkImportButton?.addEventListener("click", async () => {
+    const rawText = String(bulkImportJson?.value || "").trim();
+    if (!rawText) {
+      setBulkStatus("Paste JSON content or choose a JSON file first.", "error");
+      renderBulkImportResults([]);
+      return;
+    }
+
+    bulkImportButton.disabled = true;
+    setBulkStatus("");
+    renderBulkImportResults([]);
+
+    try {
+      const importedPosts = parseBulkImportPosts(rawText);
+      if (!importedPosts.length) {
+        throw new Error("The JSON did not contain any posts to import.");
+      }
+
+      const createdDrafts = [];
+      const failures = [];
+
+      for (let index = 0; index < importedPosts.length; index += 1) {
+        try {
+          const nextDraft = createImportedDraftPayload(importedPosts[index]);
+          const created = await createDraftDocument(nextDraft);
+          createdDrafts.push(created);
+        } catch (error) {
+          failures.push(`Post ${index + 1}: ${error.message || "Import failed."}`);
+        }
+      }
+
+      if (createdDrafts.length) {
+        renderBulkImportResults(createdDrafts);
+        if (bulkImportJson) {
+          bulkImportJson.value = "";
+        }
+        if (bulkImportFile) {
+          bulkImportFile.value = "";
+        }
+      }
+
+      if (createdDrafts.length && failures.length) {
+        setBulkStatus(`Imported ${createdDrafts.length} drafts. ${failures[0]}`, "info");
+        return;
+      }
+      if (createdDrafts.length) {
+        setBulkStatus(`Imported ${createdDrafts.length} draft${createdDrafts.length === 1 ? "" : "s"}. Open any draft below to edit and publish it.`, "success");
+        return;
+      }
+      throw new Error(failures[0] || "No drafts could be imported.");
+    } catch (error) {
+      console.error(error);
+      setBulkStatus(error.message || "Bulk import failed.", "error");
+    } finally {
+      bulkImportButton.disabled = false;
+    }
+  });
+
   form.addEventListener("submit", async (event) => {
     event.preventDefault();
     submit.disabled = true;
+    if (saveDraftButton) {
+      saveDraftButton.disabled = true;
+    }
     setStatus(status, "");
 
     try {
+      const action = event.submitter?.dataset.postAction === "draft" ? "draft" : "publish";
+      const savingDraft = action === "draft";
       const formData = new FormData(form);
-      const title = String(formData.get("title") || "").trim();
-      const caption = String(formData.get("caption") || "").trim();
-      const applyUrl = safeUrl(String(formData.get("applyUrl") || "").trim());
-      if (!title || !caption || !applyUrl) {
-        throw new Error("Title, description, and details URL are required.");
-      }
-      if (caption.length > MAX_CAPTION_LENGTH) {
-        throw new Error(`Descriptions can be up to ${MAX_CAPTION_LENGTH} characters.`);
-      }
-
       const coverFile = qs("#coverMedia").files?.[0];
       const attachmentFiles = Array.from(qs("#attachments").files || []);
-      let media = editingOpportunity?.media || { url: DEFAULT_COVER, alt: title };
+      let media = editingOpportunity?.media || { url: DEFAULT_COVER, alt: String(formData.get("title") || "").trim() || "Opportunity cover" };
       if (coverFile) {
         media = await uploadFile(coverFile, "opportunity-media", user.uid);
-        media.alt = title;
+        media.alt = String(formData.get("title") || "").trim() || media.alt;
       }
 
       const uploadedAttachments = await Promise.all(
         attachmentFiles.map((file) => uploadFile(file, "opportunity-attachments", user.uid)),
       );
-      const draftPayload = {
-        title,
-        caption,
-        applyUrl,
-        category: String(formData.get("category") || "Internship"),
-        locationLabel: String(formData.get("locationLabel") || "").trim(),
-        workMode: String(formData.get("workMode") || "Remote"),
-        payLabel: String(formData.get("payLabel") || "").trim(),
-        deadlineAt: (() => {
-          const deadlineValue = String(formData.get("deadlineAt") || "").trim();
-          const fallback = new Date(Date.now() + 1000 * 60 * 60 * 24 * 30);
-          return (deadlineValue ? new Date(deadlineValue) : fallback).toISOString();
-        })(),
-        tags: extractHashtags(caption),
-        eligibility: linesFromInput(formData.get("eligibility")),
-        responsibilities: linesFromInput(formData.get("responsibilities")),
-        requirements: linesFromInput(formData.get("requirements")),
-        perks: linesFromInput(formData.get("perks")),
-        aboutCompany: String(formData.get("aboutCompany") || "").trim(),
-        allowComments: Boolean(formData.get("allowComments")),
+      const draftPayload = createFormDraftPayload(
+        formData,
         media,
-        attachments: [...existingAttachmentsState, ...uploadedAttachments],
-        creatorUid: user.uid,
-        creatorName: profile.displayName,
-        creatorHandle: `@${profile.username}`,
-        creatorPhotoURL: profile.photoURL || DEFAULT_AVATAR,
-      };
+        [...existingAttachmentsState, ...uploadedAttachments],
+      );
+
+      if (savingDraft) {
+        const draftDocPayload = opportunityDraftToFirestorePayload(draftPayload, "draft");
+        if (editingOpportunity) {
+          await updateDoc(doc(db, "opportunities", editingOpportunity.id), draftDocPayload);
+          editingOpportunity = {
+            ...editingOpportunity,
+            ...draftDocPayload,
+          };
+          paintCreateActions();
+          setStatus(status, "Draft saved.", "success");
+        } else {
+          const created = await createDraftDocument(draftPayload);
+          resetComposerForm();
+          setStatus(status, `Draft saved. Open it later from the dashboard or edit it now.`, "success");
+          renderBulkImportResults([created]);
+        }
+        return;
+      }
 
       if (profile.role !== "admin") {
         const reviewResult = await submitOpportunityReviewRequest({
@@ -4660,6 +5011,7 @@ async function initCreatePost(user, profile) {
               ...opportunityDraftToFirestorePayload(draftPayload, reviewedStatus),
               review: reviewResult.review || editingOpportunity.review,
             };
+            paintCreateActions();
             setStatus(
               status,
               reviewResult?.message
@@ -4671,15 +5023,7 @@ async function initCreatePost(user, profile) {
               reviewedStatus === "published" ? "success" : "info",
             );
           } else {
-            form.reset();
-            existingAttachmentsState.length = 0;
-            renderExistingAttachments();
-            syncCaptionCount();
-            if (coverPreviewObjectUrl) {
-              URL.revokeObjectURL(coverPreviewObjectUrl);
-              coverPreviewObjectUrl = "";
-            }
-            paintCoverPreview(DEFAULT_COVER, "image/jpeg");
+            resetComposerForm();
             setStatus(
               status,
               reviewResult?.message
@@ -4699,7 +5043,9 @@ async function initCreatePost(user, profile) {
         }
       }
 
-      const nextStatus = editingOpportunity?.status || (profile.role === "admin" ? "published" : "pending");
+      const nextStatus = editingOpportunity?.status === "draft"
+        ? (profile.role === "admin" ? "published" : "pending")
+        : (editingOpportunity?.status || (profile.role === "admin" ? "published" : "pending"));
       const payload = opportunityDraftToFirestorePayload(draftPayload, nextStatus);
       if (profile.role !== "admin") {
         payload.review = {
@@ -4722,6 +5068,7 @@ async function initCreatePost(user, profile) {
           ...editingOpportunity,
           ...payload,
         };
+        paintCreateActions();
         setStatus(
           status,
           nextStatus === "pending"
@@ -4739,15 +5086,7 @@ async function initCreatePost(user, profile) {
           commentsCount: 0,
           likesCount: 0,
         });
-        form.reset();
-        existingAttachmentsState.length = 0;
-        renderExistingAttachments();
-        syncCaptionCount();
-        if (coverPreviewObjectUrl) {
-          URL.revokeObjectURL(coverPreviewObjectUrl);
-          coverPreviewObjectUrl = "";
-        }
-        paintCoverPreview(DEFAULT_COVER, "image/jpeg");
+        resetComposerForm();
         setStatus(
           status,
           nextStatus === "pending"
@@ -4761,6 +5100,9 @@ async function initCreatePost(user, profile) {
       setStatus(status, error.message || "Publishing failed.", "error");
     } finally {
       submit.disabled = false;
+      if (saveDraftButton) {
+        saveDraftButton.disabled = false;
+      }
     }
   });
 

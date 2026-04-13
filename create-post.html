@@ -33,6 +33,37 @@
         Sign in to publish or edit opportunities.
       </div>
 
+      <div class="rounded-3xl border border-white/10 bg-white/5 p-4 space-y-4">
+        <div class="flex items-start justify-between gap-3">
+          <div>
+            <h2 class="font-semibold">Bulk import JSON</h2>
+            <p class="text-sm text-white/60 mt-1">Paste a JSON payload or upload a `.json` file. Imported opportunities are saved as drafts so you can edit and publish them later.</p>
+          </div>
+          <span class="material-symbols-outlined text-white/60">data_object</span>
+        </div>
+
+        <div class="grid gap-4 md:grid-cols-[1fr,220px]">
+          <div>
+            <label for="bulkImportJson" class="block text-sm text-white/70 mb-2">JSON content</label>
+            <textarea id="bulkImportJson" rows="10" class="w-full bg-white/10 rounded-2xl px-4 py-4 text-sm outline-none" placeholder='{"posts":[{"title":"...","description":"...","detailsUrl":"https://..."}]}'></textarea>
+          </div>
+
+          <div class="space-y-4">
+            <div>
+              <label for="bulkImportFile" class="block text-sm text-white/70 mb-2">JSON file</label>
+              <input id="bulkImportFile" type="file" accept=".json,application/json" class="w-full text-sm text-white/70 file:mr-3 file:rounded-xl file:border-0 file:bg-white file:px-4 file:py-2 file:text-black" />
+            </div>
+            <button id="bulkImportButton" type="button" class="w-full rounded-2xl border border-white/10 bg-white/10 py-3 font-semibold">
+              Import to drafts
+            </button>
+            <p class="text-xs text-white/45">Accepted shape: a top-level `posts` array. Required keys: `title`, `description`, `detailsUrl`, `category`, `workStyle`, `location`, `compensation`, and `deadline`.</p>
+          </div>
+        </div>
+
+        <div id="bulkImportStatus" class="hidden"></div>
+        <div id="bulkImportResults" class="hidden space-y-2"></div>
+      </div>
+
       <form id="createPostForm" class="space-y-4">
         <div class="rounded-3xl border border-white/10 bg-white/5 p-4">
           <div class="grid gap-4 md:grid-cols-[220px,1fr]">
@@ -152,9 +183,15 @@
           Delete post
         </button>
 
-        <button id="publishOpportunityButton" type="submit" class="theme-primary w-full transition rounded-2xl py-4 font-semibold">
-          Publish opportunity
-        </button>
+        <div class="grid gap-3 md:grid-cols-2">
+          <button id="saveDraftButton" data-post-action="draft" type="submit" class="w-full rounded-2xl border border-white/10 bg-white/10 py-4 font-semibold">
+            Save draft
+          </button>
+
+          <button id="publishOpportunityButton" data-post-action="publish" type="submit" class="theme-primary w-full transition rounded-2xl py-4 font-semibold">
+            Publish opportunity
+          </button>
+        </div>
       </form>
     </div>
   </div>
