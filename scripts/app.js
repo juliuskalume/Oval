@@ -43,8 +43,11 @@ const FEED_CACHE_LIMIT = 10;
 const FEED_VIDEO_SOUND_KEY = "oval.feedVideoSoundEnabled";
 const FEED_CACHE_KEY = "oval.feed.publicOpportunities.v1";
 const FEED_GESTURE_COOLDOWN = 650;
-const FEED_TOUCH_THRESHOLD = 50;
 const FEED_WHEEL_THRESHOLD = 12;
+const FEED_DRAG_THRESHOLD_PX = 90;
+const FEED_DRAG_THRESHOLD_RATIO = 0.16;
+const FEED_DRAG_RESISTANCE = 0.92;
+const FEED_EDGE_DRAG_RESISTANCE = 0.35;
 const FEED_VIEWPORT_TRANSITION = "transform 520ms cubic-bezier(0.22, 1, 0.36, 1)";
 const SETTINGS_PREFS_KEY = "oval.settings.preferences";
 const PROFILE_CACHE_PREFIX = "oval.profile.";
@@ -2014,9 +2017,12 @@ function installFeedViewportPager(feed, viewport, options = {}) {
 
   let activeIndex = 0;
   let isAnimating = false;
+  let isDragging = false;
   let touchStartY = 0;
+  let touchCurrentY = 0;
   let touchEndY = 0;
-  let gestureTimeout = 0;
+  let dragOffsetY = 0;
+  let scrollSnapTimeout = 0;
   let lastGestureAt = 0;
 
   function getCards() {
@@ -2027,18 +2033,33 @@ function installFeedViewportPager(feed, viewport, options = {}) {
     return Math.max(0, getCards().length - 1);
   }
 
-  function clearGestureTimeout() {
-    if (gestureTimeout) {
-      window.clearTimeout(gestureTimeout);
-      gestureTimeout = 0;
+  function getCardOffset(index) {
+    const cards = getCards();
+    const safeIndex = clampNumber(index, 0, Math.max(0, cards.length - 1));
+    const card = cards[safeIndex];
+    return card ? card.offsetTop : 0;
+  }
+
+  function setViewportTransform(offsetY) {
+    viewport.style.transform = `translateY(${offsetY}px)`;
+  }
+
+  function setViewportTransition(enabled) {
+    viewport.style.transition = enabled ? FEED_VIEWPORT_TRANSITION : "none";
+  }
+
+  function clearScrollSnapTimeout() {
+    if (scrollSnapTimeout) {
+      window.clearTimeout(scrollSnapTimeout);
+      scrollSnapTimeout = 0;
     }
   }
 
-  function finishGestureCooldown() {
-    clearGestureTimeout();
-    gestureTimeout = window.setTimeout(() => {
+  function completeAnimationLock() {
+    clearScrollSnapTimeout();
+    scrollSnapTimeout = window.setTimeout(() => {
       isAnimating = false;
-      gestureTimeout = 0;
+      scrollSnapTimeout = 0;
     }, FEED_GESTURE_COOLDOWN);
   }
 
@@ -2047,9 +2068,10 @@ function installFeedViewportPager(feed, viewport, options = {}) {
     const cards = getCards();
     if (!cards.length) {
       activeIndex = 0;
-      viewport.style.transform = "translateY(0px)";
-      clearGestureTimeout();
+      setViewportTransform(0);
+      clearScrollSnapTimeout();
       isAnimating = false;
+      isDragging = false;
       return;
     }
 
@@ -2060,28 +2082,30 @@ function installFeedViewportPager(feed, viewport, options = {}) {
     }
 
     activeIndex = safeIndex;
-    clearGestureTimeout();
+    clearScrollSnapTimeout();
 
     if (immediate) {
-      viewport.style.transition = "none";
-      viewport.style.transform = `translateY(-${targetCard.offsetTop}px)`;
+      setViewportTransition(false);
+      setViewportTransform(-targetCard.offsetTop);
       isAnimating = false;
+      isDragging = false;
       options.onActiveIndexChange?.(activeIndex, targetCard, cards);
       window.requestAnimationFrame(() => {
-        viewport.style.transition = FEED_VIEWPORT_TRANSITION;
+        setViewportTransition(true);
       });
       return;
     }
 
     isAnimating = true;
     lastGestureAt = Date.now();
-    viewport.style.transform = `translateY(-${targetCard.offsetTop}px)`;
+    setViewportTransition(true);
+    setViewportTransform(-targetCard.offsetTop);
     options.onActiveIndexChange?.(activeIndex, targetCard, cards);
-    finishGestureCooldown();
+    completeAnimationLock();
   }
 
   function canAcceptGesture() {
-    return !isAnimating && (Date.now() - lastGestureAt >= FEED_GESTURE_COOLDOWN);
+    return !isAnimating && !isDragging && (Date.now() - lastGestureAt >= FEED_GESTURE_COOLDOWN);
   }
 
   function goNext() {
@@ -2115,25 +2139,67 @@ function installFeedViewportPager(feed, viewport, options = {}) {
   }, { passive: false });
 
   feed.addEventListener("touchstart", (event) => {
+    if (isAnimating) {
+      return;
+    }
     touchStartY = event.changedTouches[0]?.clientY || 0;
+    touchCurrentY = touchStartY;
+    touchEndY = touchStartY;
+    dragOffsetY = 0;
+    isDragging = true;
+    setViewportTransition(false);
   }, { passive: true });
 
   feed.addEventListener("touchmove", (event) => {
+    if (!isDragging) {
+      return;
+    }
     event.preventDefault();
+
+    touchCurrentY = event.changedTouches[0]?.clientY || touchStartY;
+    const rawDelta = touchCurrentY - touchStartY;
+    const atFirstCard = activeIndex === 0;
+    const atLastCard = activeIndex === getMaxIndex();
+    const draggingDownAtTop = rawDelta > 0 && atFirstCard;
+    const draggingUpAtBottom = rawDelta < 0 && atLastCard;
+
+    dragOffsetY = (draggingDownAtTop || draggingUpAtBottom)
+      ? rawDelta * FEED_EDGE_DRAG_RESISTANCE
+      : rawDelta * FEED_DRAG_RESISTANCE;
+
+    const baseOffset = -getCardOffset(activeIndex);
+    setViewportTransform(baseOffset + dragOffsetY);
   }, { passive: false });
 
   feed.addEventListener("touchend", (event) => {
-    touchEndY = event.changedTouches[0]?.clientY || 0;
-    const deltaY = touchStartY - touchEndY;
-    if (Math.abs(deltaY) < FEED_TOUCH_THRESHOLD || !canAcceptGesture()) {
+    if (!isDragging) {
       return;
     }
 
-    if (deltaY > 0) {
-      goNext();
+    touchEndY = event.changedTouches[0]?.clientY || 0;
+    const deltaY = touchEndY - touchStartY;
+    const threshold = Math.max(FEED_DRAG_THRESHOLD_PX, window.innerHeight * FEED_DRAG_THRESHOLD_RATIO);
+    isDragging = false;
+    lastGestureAt = Date.now();
+
+    if (Math.abs(deltaY) >= threshold) {
+      if (deltaY < 0) {
+        snapToIndex(activeIndex + 1);
+        return;
+      }
+      snapToIndex(activeIndex - 1);
       return;
     }
-    goPrev();
+
+    snapToIndex(activeIndex);
+  }, { passive: true });
+
+  feed.addEventListener("touchcancel", () => {
+    if (!isDragging) {
+      return;
+    }
+    isDragging = false;
+    snapToIndex(activeIndex);
   }, { passive: true });
 
   window.addEventListener("keydown", (event) => {
@@ -2148,12 +2214,10 @@ function installFeedViewportPager(feed, viewport, options = {}) {
   });
 
   window.addEventListener("resize", () => {
-    const cards = getCards();
-    const currentCard = cards[activeIndex];
-    viewport.style.transition = "none";
-    viewport.style.transform = currentCard ? `translateY(-${currentCard.offsetTop}px)` : "translateY(0px)";
+    setViewportTransition(false);
+    setViewportTransform(-getCardOffset(activeIndex));
     window.requestAnimationFrame(() => {
-      viewport.style.transition = FEED_VIEWPORT_TRANSITION;
+      setViewportTransition(true);
     });
   });
 
