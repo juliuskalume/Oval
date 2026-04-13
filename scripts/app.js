@@ -2919,8 +2919,8 @@ function renderCommentThread(comment, repliesByParent, opportunity, user, profil
 function paintSaveActionButton(button, saved) {
   if (button.closest("#feedSlides")) {
     button.innerHTML = `
-      <span class="material-symbols-outlined text-[30px]">${saved ? "bookmark" : "bookmark_add"}</span>
-      <span class="text-xs mt-1">${saved ? "Saved" : "Save"}</span>
+      <span class="material-symbols-outlined text-[30px] ${saved ? "text-emerald-300" : "text-white"}" style="font-variation-settings: 'FILL' ${saved ? 1 : 0}, 'wght' 500, 'GRAD' 0, 'opsz' 24;">${saved ? "bookmark" : "bookmark_add"}</span>
+      <span class="text-xs mt-1 ${saved ? "text-emerald-200" : ""}">${saved ? "Saved" : "Save"}</span>
     `;
     return;
   }
@@ -2936,8 +2936,8 @@ function paintLikeActionButton(button, liked, likesCount) {
     return;
   }
   button.innerHTML = `
-    <span class="material-symbols-outlined text-[30px]">${liked ? "favorite" : "favorite_border"}</span>
-    <span class="text-xs mt-1">${escapeHtml(formatCompact(likesCount || 0))}</span>
+    <span class="material-symbols-outlined text-[30px] ${liked ? "text-rose-300" : "text-white"}" style="font-variation-settings: 'FILL' ${liked ? 1 : 0}, 'wght' 500, 'GRAD' 0, 'opsz' 24;">${liked ? "favorite" : "favorite"}</span>
+    <span class="text-xs mt-1 ${liked ? "text-rose-200" : ""}">${escapeHtml(formatCompact(likesCount || 0))}</span>
   `;
 }
 
@@ -3004,8 +3004,8 @@ function renderFeedSlide(opportunity, state = {}) {
             <img src="${escapeHtml(creatorAvatar(opportunity))}" class="w-12 h-12 rounded-full border-2 border-white object-cover" alt="${creatorName}">
           </div>`}
           <button type="button" class="flex flex-col items-center" data-action="toggle-like" data-id="${escapeHtml(opportunity.id)}">
-            <span class="material-symbols-outlined text-[30px]">${state.liked ? "favorite" : "favorite_border"}</span>
-            <span class="text-xs mt-1">${escapeHtml(formatCompact(opportunity.likesCount || 0))}</span>
+            <span class="material-symbols-outlined text-[30px] ${state.liked ? "text-rose-300" : "text-white"}" style="font-variation-settings: 'FILL' ${state.liked ? 1 : 0}, 'wght' 500, 'GRAD' 0, 'opsz' 24;">favorite</span>
+            <span class="text-xs mt-1 ${state.liked ? "text-rose-200" : ""}">${escapeHtml(formatCompact(opportunity.likesCount || 0))}</span>
           </button>
           <a href="${commentsUrl(opportunity.id)}" class="flex flex-col items-center">
             <span class="material-symbols-outlined text-[30px]">chat_bubble</span>
@@ -3016,8 +3016,8 @@ function renderFeedSlide(opportunity, state = {}) {
             <span class="text-xs mt-1">Share</span>
           </button>
           <button type="button" class="flex flex-col items-center" data-action="toggle-save" data-id="${escapeHtml(opportunity.id)}">
-            <span class="material-symbols-outlined text-[30px]">${state.saved ? "bookmark" : "bookmark_add"}</span>
-            <span class="text-xs mt-1">${state.saved ? "Saved" : "Save"}</span>
+            <span class="material-symbols-outlined text-[30px] ${state.saved ? "text-emerald-300" : "text-white"}" style="font-variation-settings: 'FILL' ${state.saved ? 1 : 0}, 'wght' 500, 'GRAD' 0, 'opsz' 24;">${state.saved ? "bookmark" : "bookmark_add"}</span>
+            <span class="text-xs mt-1 ${state.saved ? "text-emerald-200" : ""}">${state.saved ? "Saved" : "Save"}</span>
           </button>
           ${showAudioToggle ? `
             <button type="button" class="flex flex-col items-center" data-action="toggle-video-audio" data-id="${escapeHtml(opportunity.id)}" data-video-audio-button>
