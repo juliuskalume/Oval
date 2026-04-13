@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Oval - Delete Account</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" />
+  <link rel="stylesheet" href="styles/material-symbols.css" />
+  <style>
+    body { font-family: Inter, sans-serif; }
+    .phone { max-width: 430px; margin: 0 auto; min-height: 100vh; background: #000; position: relative; overflow: hidden; }
+  </style>
+  <link rel="stylesheet" href="styles/theme.css" />
+</head>
+<body data-page="delete-account" class="bg-black min-h-screen text-white">
+  <div class="phone bg-black flex flex-col">
+    <div class="px-4 pb-4 safe-top-4 border-b border-white/10 flex items-center gap-3">
+      <a href="settings.html" class="w-10 h-10 rounded-full bg-white/5 flex items-center justify-center">
+        <span class="material-symbols-outlined">arrow_back</span>
+      </a>
+      <div>
+        <h1 class="text-lg font-bold">Delete account</h1>
+        <p class="text-sm text-white/50">Request permanent removal for admin review</p>
+      </div>
+    </div>
+
+    <div class="flex-1 px-4 py-4 pb-16 space-y-4">
+      <div id="deleteAccountStatus" class="hidden"></div>
+
+      <section class="rounded-3xl bg-white/5 border border-white/10 p-5 space-y-3">
+        <h2 class="font-semibold">Before you continue</h2>
+        <ul class="space-y-2 text-sm text-white/70 leading-6">
+          <li>Your request is reviewed by an admin before permanent deletion is processed.</li>
+          <li>If you sign back in before deletion happens, your pending request is removed.</li>
+          <li>Deleting your account may remove your profile, your owned posts, and related account access.</li>
+        </ul>
+      </section>
+
+      <section class="rounded-3xl bg-white/5 border border-white/10 p-5 space-y-3">
+        <h2 class="font-semibold">Account to be deleted</h2>
+        <p id="deleteAccountEmail" class="text-sm text-white/70"></p>
+        <p id="deleteAccountHandle" class="text-sm text-white/50"></p>
+      </section>
+
+      <section id="deleteAccountIdleCard" class="rounded-3xl bg-white/5 border border-white/10 p-5 space-y-3">
+        <div>
+          <h2 class="font-semibold">Submit a deletion request</h2>
+          <p class="text-sm text-white/50 mt-1">Add an optional note for the admin team.</p>
+        </div>
+        <label class="block">
+          <span class="text-sm text-white/70">Reason</span>
+          <textarea id="deleteAccountReason" rows="4" maxlength="300" class="mt-2 w-full rounded-2xl bg-white/10 border border-white/10 px-4 py-3 outline-none resize-none" placeholder="Optional note"></textarea>
+        </label>
+        <button id="deleteAccountRequestButton" type="button" class="w-full h-12 rounded-2xl bg-red-500 text-white font-semibold">
+          Request account deletion
+        </button>
+      </section>
+
+      <section id="deleteAccountPendingCard" class="hidden rounded-3xl bg-red-500/10 border border-red-400/20 p-5 space-y-3">
+        <div>
+          <h2 class="font-semibold text-red-100">Deletion request pending</h2>
+          <p class="text-sm text-red-100/70 mt-1">Requested on <span id="deleteAccountRequestedAt"></span>.</p>
+        </div>
+        <p class="text-sm text-red-100/80">Your request is waiting for admin review. If you changed your mind, keep your account and cancel the request below.</p>
+        <button id="deleteAccountCancelButton" type="button" class="w-full h-12 rounded-2xl bg-white/10 border border-white/10 text-white font-semibold">
+          Keep account
+        </button>
+      </section>
+
+      <section class="rounded-3xl bg-white/5 border border-white/10 p-5 space-y-3">
+        <h2 class="font-semibold">Related policies</h2>
+        <div class="space-y-2 text-sm">
+          <a href="terms.html" class="flex items-center justify-between rounded-2xl bg-white/5 border border-white/10 px-4 py-4">
+            <span>Terms of Use</span>
+            <span class="material-symbols-outlined">chevron_right</span>
+          </a>
+          <a href="privacy.html" class="flex items-center justify-between rounded-2xl bg-white/5 border border-white/10 px-4 py-4">
+            <span>Privacy Policy</span>
+            <span class="material-symbols-outlined">chevron_right</span>
+          </a>
+        </div>
+      </section>
+    </div>
+  </div>
+  <script type="module" src="scripts/app.js"></script>
+</body>
+</html>

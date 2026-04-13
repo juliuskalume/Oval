@@ -28,6 +28,35 @@ service cloud.firestore {
       return role == 'member' || role == 'admin';
     }
 
+    function validUsernameValue(value) {
+      return value is string
+        && value.size() >= 3
+        && value.size() <= 32
+        && value.matches('^[a-z0-9](?:[a-z0-9._-]{1,30}[a-z0-9])?$');
+    }
+
+    function usernameFieldsUnchanged() {
+      return request.resource.data.username == resource.data.username
+        && request.resource.data.usernameUpdatedAt == resource.data.usernameUpdatedAt;
+    }
+
+    function validSelfUsernameChange(uid) {
+      return request.auth.uid == uid
+        && validUsernameValue(request.resource.data.username)
+        && request.resource.data.username != resource.data.username
+        && request.resource.data.usernameUpdatedAt is timestamp
+        && existsAfter(/databases/$(database)/documents/usernames/$(request.resource.data.username))
+        && getAfter(/databases/$(database)/documents/usernames/$(request.resource.data.username)).data.uid == uid
+        && (
+          !resource.data.keys().hasAny(['usernameUpdatedAt'])
+          || (
+            resource.data.usernameUpdatedAt is timestamp
+            && request.time >= resource.data.usernameUpdatedAt + duration.value(14, 'd')
+            && request.resource.data.usernameUpdatedAt > resource.data.usernameUpdatedAt
+          )
+        );
+    }
+
     function validOpportunityStatus(value) {
       return value == 'draft' || value == 'pending' || value == 'published' || value == 'archived';
     }
@@ -192,12 +221,88 @@ service cloud.firestore {
         );
     }
 
+    function validUsernameReservation() {
+      return request.resource.data.keys().hasOnly([
+          'uid',
+          'username',
+          'createdAt',
+          'updatedAt'
+        ])
+        && request.resource.data.uid is string
+        && request.resource.data.uid.size() > 0
+        && validUsernameValue(request.resource.data.username)
+        && request.resource.data.createdAt is timestamp
+        && request.resource.data.updatedAt is timestamp;
+    }
+
+    function validDeletionRequest() {
+      return request.resource.data.keys().hasOnly([
+          'uid',
+          'email',
+          'displayName',
+          'username',
+          'reason',
+          'status',
+          'requestedAt',
+          'updatedAt'
+        ])
+        && request.resource.data.uid is string
+        && request.resource.data.uid.size() > 0
+        && request.resource.data.email is string
+        && request.resource.data.email.size() <= 160
+        && request.resource.data.displayName is string
+        && request.resource.data.displayName.size() > 0
+        && request.resource.data.displayName.size() <= 80
+        && request.resource.data.username is string
+        && request.resource.data.username.size() <= 32
+        && request.resource.data.reason is string
+        && request.resource.data.reason.size() <= 300
+        && request.resource.data.status == 'pending'
+        && request.resource.data.requestedAt is timestamp
+        && request.resource.data.updatedAt is timestamp;
+    }
+
+    match /usernames/{username} {
+      allow read: if signedIn();
+      allow create: if validUsernameReservation()
+        && username == request.resource.data.username
+        && (
+          isAdmin()
+          || (
+            signedIn()
+            && request.resource.data.uid == request.auth.uid
+          )
+        );
+      allow update: if validUsernameReservation()
+        && username == request.resource.data.username
+        && (
+          isAdmin()
+          || (
+            signedIn()
+            && resource.data.uid == request.auth.uid
+            && request.resource.data.uid == request.auth.uid
+          )
+        );
+      allow delete: if isAdmin()
+        || (signedIn() && resource.data.uid == request.auth.uid);
+    }
+
+    match /accountDeletionRequests/{uid} {
+      allow read: if isAdmin() || (signedIn() && request.auth.uid == uid);
+      allow create, update: if signedIn()
+        && request.auth.uid == uid
+        && request.resource.data.uid == uid
+        && validDeletionRequest();
+      allow delete: if isAdmin() || (signedIn() && request.auth.uid == uid);
+    }
+
     match /users/{uid} {
       allow read: if signedIn();
 
       allow create: if signedIn()
         && request.auth.uid == uid
         && validRole(request.resource.data.role)
+        && validUsernameValue(request.resource.data.username)
         && (
           request.resource.data.role == 'member'
           || (request.resource.data.role == 'admin' && isBootstrapAdminEmail())
@@ -208,6 +313,10 @@ service cloud.firestore {
           signedIn()
           && request.auth.uid == uid
           && request.resource.data.role == resource.data.role
+          && (
+            usernameFieldsUnchanged()
+            || validSelfUsernameChange(uid)
+          )
         );
 
       allow delete: if isAdmin();

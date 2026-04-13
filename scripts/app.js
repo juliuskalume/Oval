@@ -60,6 +60,11 @@ const ATTACHMENT_MAX_COUNT = 5;
 const VIDEO_MODERATION_FRAME_MAX_DIMENSION = 960;
 const VIDEO_MODERATION_FRAME_QUALITY = 0.72;
 const FEED_LIKE_ICON_ASSET = "assets/icons/instagram-like.png";
+const USERNAME_MIN_LENGTH = 3;
+const USERNAME_MAX_LENGTH = 32;
+const USERNAME_COOLDOWN_MS = 14 * 24 * 60 * 60 * 1000;
+const AUTH_SESSION_PREFIX = "oval.auth.session.";
+const ACCOUNT_DELETION_REASON_MAX_LENGTH = 300;
 const TAP_HAPTIC_SELECTOR = [
   'a[href]',
   'button',
@@ -82,6 +87,8 @@ const NON_BLOCKING_PROFILE_PAGES = new Set([
   "details",
   "comments",
   "search",
+  "terms",
+  "privacy",
 ]);
 const DEFAULT_COVER =
   "https://images.unsplash.com/photo-1521737604893-d14cc237f11d?auto=format&fit=crop&w=1200&q=80";
@@ -237,6 +244,9 @@ function shouldShowLoaderForLink(link, event) {
   if (!link || event.defaultPrevented || event.button !== 0) {
     return false;
   }
+  if (link.hasAttribute("data-history-back")) {
+    return false;
+  }
   if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) {
     return false;
   }
@@ -274,6 +284,22 @@ function wireLoadingTransitions() {
   });
 }
 
+function wireHistoryBackLinks() {
+  document.addEventListener("click", (event) => {
+    const trigger = event.target.closest("[data-history-back]");
+    if (!trigger) {
+      return;
+    }
+    event.preventDefault();
+    const fallbackHref = trigger.getAttribute("href") || trigger.dataset.historyBack || "onboarding.html";
+    if (window.history.length > 1) {
+      window.history.back();
+      return;
+    }
+    location.href = fallbackHref;
+  }, true);
+}
+
 function escapeHtml(value) {
   return String(value ?? "")
     .replace(/&/g, "&amp;")
@@ -298,6 +324,214 @@ function uniqueUsername(source) {
 
 function normalizeEmail(value) {
   return String(value || "").trim().toLowerCase();
+}
+
+function normalizeUsernameValue(value) {
+  return String(value ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(/^@+/, "")
+    .replace(/[^a-z0-9._-]+/g, "-")
+    .replace(/^[._-]+|[._-]+$/g, "")
+    .slice(0, USERNAME_MAX_LENGTH);
+}
+
+function usernameValidationError(value) {
+  const normalized = normalizeUsernameValue(value);
+  if (normalized.length < USERNAME_MIN_LENGTH) {
+    return `Usernames must be at least ${USERNAME_MIN_LENGTH} characters.`;
+  }
+  if (normalized.length > USERNAME_MAX_LENGTH) {
+    return `Usernames must be ${USERNAME_MAX_LENGTH} characters or fewer.`;
+  }
+  return "";
+}
+
+function usernameReservationRef(username) {
+  const normalized = normalizeUsernameValue(username);
+  return normalized ? doc(db, "usernames", normalized) : null;
+}
+
+function authSessionKey(uid) {
+  return `${AUTH_SESSION_PREFIX}${uid}`;
+}
+
+function markAuthSession(uid) {
+  if (!uid) {
+    return false;
+  }
+  const key = authSessionKey(uid);
+  const fresh = sessionStorage.getItem(key) !== "1";
+  sessionStorage.setItem(key, "1");
+  return fresh;
+}
+
+function clearAuthSessionMarker(uid) {
+  if (!uid) {
+    return;
+  }
+  sessionStorage.removeItem(authSessionKey(uid));
+}
+
+function usernameCooldownInfo(profile) {
+  const lastChangedAt = toDate(profile?.usernameUpdatedAt);
+  if (!lastChangedAt) {
+    return {
+      canChange: true,
+      availableAt: null,
+      remainingMs: 0,
+    };
+  }
+  const availableAt = new Date(lastChangedAt.getTime() + USERNAME_COOLDOWN_MS);
+  const remainingMs = Math.max(0, availableAt.getTime() - Date.now());
+  return {
+    canChange: remainingMs <= 0,
+    availableAt,
+    remainingMs,
+  };
+}
+
+async function findAvailableUsername(base, excludeUid = "") {
+  const normalizedBase = normalizeUsernameValue(base) || normalizeUsernameValue(uniqueUsername(base || "oval-user"));
+  const root = (normalizedBase || "oval-user").slice(0, Math.max(USERNAME_MIN_LENGTH, USERNAME_MAX_LENGTH - 4));
+  for (let index = 0; index < 500; index += 1) {
+    const suffix = index === 0 ? "" : `${index + 1}`;
+    const candidate = `${root}${suffix}`.slice(0, USERNAME_MAX_LENGTH);
+    const reservationRef = usernameReservationRef(candidate);
+    if (!reservationRef) {
+      continue;
+    }
+    const reservationSnap = await getDoc(reservationRef);
+    if (!reservationSnap.exists() || reservationSnap.data()?.uid === excludeUid) {
+      return candidate;
+    }
+  }
+  throw new Error("A unique username could not be generated right now. Try again.");
+}
+
+async function ensureUsernameReservation(uid, profile) {
+  if (!uid) {
+    return profile;
+  }
+  const profileRef = doc(db, "users", uid);
+  const desired = normalizeUsernameValue(profile?.username || uniqueUsername(profileDisplayName(profile)));
+  const now = Timestamp.now();
+  const fallbackUsername = desired || await findAvailableUsername(profileDisplayName(profile), uid);
+  const desiredRef = usernameReservationRef(fallbackUsername);
+  if (!desiredRef) {
+    return profile;
+  }
+
+  const desiredSnap = await getDoc(desiredRef);
+  if (!desiredSnap.exists() || desiredSnap.data()?.uid === uid) {
+    if (!desiredSnap.exists()) {
+      await setDoc(desiredRef, {
+        uid,
+        username: fallbackUsername,
+        createdAt: now,
+        updatedAt: now,
+      });
+    }
+    if (profile?.username !== fallbackUsername) {
+      await updateDoc(profileRef, {
+        username: fallbackUsername,
+        updatedAt: now,
+      });
+      return {
+        ...profile,
+        username: fallbackUsername,
+      };
+    }
+    return profile;
+  }
+
+  const nextUsername = await findAvailableUsername(fallbackUsername, uid);
+  const nextRef = usernameReservationRef(nextUsername);
+  const previousRef = usernameReservationRef(profile?.username || "");
+
+  await runTransaction(db, async (transaction) => {
+    const nextSnap = await transaction.get(nextRef);
+    if (nextSnap.exists() && nextSnap.data()?.uid !== uid) {
+      throw new Error("Username reservation conflict. Try again.");
+    }
+    if (previousRef) {
+      const previousSnap = await transaction.get(previousRef);
+      if (previousSnap.exists() && previousSnap.data()?.uid === uid) {
+        transaction.delete(previousRef);
+      }
+    }
+    transaction.set(nextRef, {
+      uid,
+      username: nextUsername,
+      createdAt: nextSnap.exists() ? nextSnap.data()?.createdAt || now : now,
+      updatedAt: now,
+    });
+    transaction.update(profileRef, {
+      username: nextUsername,
+      updatedAt: now,
+    });
+  });
+
+  return {
+    ...profile,
+    username: nextUsername,
+  };
+}
+
+async function changeUsername(user, profile, requestedUsername) {
+  if (!user?.uid || !profile) {
+    throw new Error("Authentication required.");
+  }
+  const nextUsername = normalizeUsernameValue(requestedUsername);
+  const validationError = usernameValidationError(nextUsername);
+  if (validationError) {
+    throw new Error(validationError);
+  }
+  const currentUsername = normalizeUsernameValue(profile.username || "");
+  if (nextUsername === currentUsername) {
+    return {
+      username: currentUsername,
+      changed: false,
+    };
+  }
+  const cooldown = usernameCooldownInfo(profile);
+  if (!cooldown.canChange) {
+    throw new Error(`You can change your username again on ${formatDate(cooldown.availableAt)}.`);
+  }
+
+  const now = Timestamp.now();
+  const profileRef = doc(db, "users", user.uid);
+  const nextRef = usernameReservationRef(nextUsername);
+  const currentRef = usernameReservationRef(currentUsername);
+
+  await runTransaction(db, async (transaction) => {
+    const nextSnap = await transaction.get(nextRef);
+    if (nextSnap.exists() && nextSnap.data()?.uid !== user.uid) {
+      throw new Error("That username is already taken.");
+    }
+    if (currentRef && currentUsername !== nextUsername) {
+      const currentSnap = await transaction.get(currentRef);
+      if (currentSnap.exists() && currentSnap.data()?.uid === user.uid) {
+        transaction.delete(currentRef);
+      }
+    }
+    transaction.set(nextRef, {
+      uid: user.uid,
+      username: nextUsername,
+      createdAt: nextSnap.exists() ? nextSnap.data()?.createdAt || now : now,
+      updatedAt: now,
+    });
+    transaction.update(profileRef, {
+      username: nextUsername,
+      usernameUpdatedAt: now,
+      updatedAt: now,
+    });
+  });
+
+  return {
+    username: nextUsername,
+    changed: true,
+  };
 }
 
 function nativeBridgeMethod(name) {
@@ -896,6 +1130,30 @@ async function submitOpportunityReviewRequest({ user, mode, opportunityId, paylo
   return data;
 }
 
+async function processAccountDeletionRequest({ user, targetUid, action }) {
+  const idToken = await user.getIdToken();
+  const response = await fetch("/api/process-account-deletion", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${idToken}`,
+    },
+    body: JSON.stringify({
+      targetUid,
+      action,
+    }),
+  });
+  const rawText = await response.text();
+  let data = {};
+  try {
+    data = rawText ? JSON.parse(rawText) : {};
+  } catch (error) {}
+  if (!response.ok) {
+    throw new Error(data?.error || rawText || "Account deletion processing failed.");
+  }
+  return data;
+}
+
 function toneClasses(tone) {
   if (tone === "error") {
     return "bg-red-500/15 text-red-200 border border-red-500/30";
@@ -1256,7 +1514,7 @@ async function ensureUserProfile(user, options = {}) {
       updates.email = email;
     }
     if (!data.username) {
-      updates.username = uniqueUsername(data.displayName || user.displayName || user.email?.split("@")[0]);
+      updates.username = normalizeUsernameValue(uniqueUsername(data.displayName || user.displayName || user.email?.split("@")[0]));
     }
     if (!data.bio) {
       updates.bio = defaultBio();
@@ -1269,19 +1527,22 @@ async function ensureUserProfile(user, options = {}) {
     if (Object.keys(updates).length) {
       updates.updatedAt = Timestamp.now();
       await updateDoc(profileRef, updates);
-      return {
+      return ensureUsernameReservation(user.uid, {
         ...data,
         ...updates,
-      };
+      });
     }
-    return data;
+    return ensureUsernameReservation(user.uid, {
+      ...data,
+      username: normalizeUsernameValue(data.username || ""),
+    });
   }
 
   const displayName =
     options.displayName || user.displayName || user.email?.split("@")[0] || "Oval User";
   const profile = {
     displayName,
-    username: uniqueUsername(displayName),
+    username: normalizeUsernameValue(uniqueUsername(displayName)),
     email,
     photoURL: user.photoURL || DEFAULT_AVATAR,
     role: shouldBeAdmin ? "admin" : options.role || "member",
@@ -1292,7 +1553,7 @@ async function ensureUserProfile(user, options = {}) {
     updatedAt: Timestamp.now(),
   };
   await setDoc(profileRef, profile);
-  return profile;
+  return ensureUsernameReservation(user.uid, profile);
 }
 
 async function fetchPublicOpportunitiesFromNetwork() {
@@ -1356,6 +1617,96 @@ async function loadAdminUsers() {
     console.warn("Admin user load timed out.", error);
     return [];
   }
+}
+
+async function loadAccountDeletionRequests() {
+  try {
+    const snapshot = await withTimeout(
+      getDocs(query(collection(db, "accountDeletionRequests"), orderBy("requestedAt", "desc"))),
+    );
+    return snapshot.docs.map(normalizeOpportunity);
+  } catch (error) {
+    console.warn("Deletion request load timed out.", error);
+    return [];
+  }
+}
+
+async function loadOwnAccountDeletionRequest(uid) {
+  if (!uid) {
+    return null;
+  }
+  try {
+    const snapshot = await withTimeout(getDoc(doc(db, "accountDeletionRequests", uid)));
+    return snapshot.exists()
+      ? {
+        id: snapshot.id,
+        ...snapshot.data(),
+      }
+      : null;
+  } catch (error) {
+    console.warn("Deletion request lookup failed.", error);
+    return null;
+  }
+}
+
+async function notifyAdmins(payload) {
+  const adminUsers = await loadAdminUsers();
+  await Promise.all(
+    adminUsers
+      .filter((item) => item.id)
+      .map((item) => createNotification(item.id, payload)),
+  );
+}
+
+async function requestAccountDeletion(user, profile, reason = "") {
+  if (!user?.uid || !profile) {
+    throw new Error("Authentication required.");
+  }
+  const requestRef = doc(db, "accountDeletionRequests", user.uid);
+  const now = Timestamp.now();
+  const payload = {
+    uid: user.uid,
+    email: normalizeEmail(profile.email || user.email || ""),
+    displayName: profileDisplayName(profile),
+    username: profile.username || "",
+    reason: String(reason || "").trim().slice(0, ACCOUNT_DELETION_REASON_MAX_LENGTH),
+    status: "pending",
+    requestedAt: now,
+    updatedAt: now,
+  };
+  await setDoc(requestRef, payload);
+  await notifyAdmins({
+    type: "account-deletion-request",
+    title: "Account deletion request",
+    body: `${profileDisplayName(profile)} requested account deletion.`,
+    profileUid: user.uid,
+  });
+  return {
+    id: user.uid,
+    ...payload,
+  };
+}
+
+async function cancelOwnAccountDeletionRequest(uid) {
+  if (!uid) {
+    return;
+  }
+  await deleteDoc(doc(db, "accountDeletionRequests", uid));
+}
+
+async function clearAccountDeletionRequestOnReturn(user) {
+  if (!user?.uid) {
+    return false;
+  }
+  if (!markAuthSession(user.uid)) {
+    return false;
+  }
+  const request = await loadOwnAccountDeletionRequest(user.uid);
+  if (!request) {
+    return false;
+  }
+  await cancelOwnAccountDeletionRequest(user.uid);
+  return true;
 }
 
 async function findUserByEmail(email) {
@@ -1666,8 +2017,11 @@ function notificationDestination(item) {
   if (item.type === "follow" && item.profileUid) {
     return profileUrl(item.profileUid);
   }
-  if (item.type === "admin-granted") {
+  if (item.type === "admin-granted" || item.type === "account-deletion-request") {
     return "admin-moderation.html";
+  }
+  if (item.type === "account-deletion-canceled") {
+    return "delete-account.html";
   }
   if ((item.type === "comment" || item.type === "comment-reply") && item.opportunityId) {
     return commentsUrl(item.opportunityId, item.commentId || "");
@@ -1684,6 +2038,12 @@ function notificationDestination(item) {
 function notificationIcon(item) {
   if (item?.type === "follow") {
     return "person_add";
+  }
+  if (item?.type === "account-deletion-request") {
+    return "warning";
+  }
+  if (item?.type === "account-deletion-canceled") {
+    return "undo";
   }
   if (item?.type?.includes("application")) {
     return "task_alt";
@@ -4403,6 +4763,7 @@ async function initProfile(user, profile) {
           return;
         }
         try {
+          clearAuthSessionMarker(user.uid);
           await signOut(auth);
           location.href = "onboarding.html";
         } catch (error) {
@@ -5452,6 +5813,7 @@ async function initAdminModeration(user, profile) {
   const adminAccessPanel = qs("#adminAccessPanel");
   let opportunities = [];
   let admins = [];
+  let deletionRequests = [];
   let pendingItems = [];
   let publishedItems = [];
   let archivedItems = [];
@@ -5477,6 +5839,11 @@ async function initAdminModeration(user, profile) {
       title: "Admins",
       subtitle: "Manage current moderators and grant admin access to existing Oval users.",
       hints: ["Grant admin access", "Review current admins"],
+    },
+    deletions: {
+      title: "Deletion requests",
+      subtitle: "Review account deletion requests and either cancel them or process them permanently.",
+      hints: ["Pending account removals", "Approve to delete", "Cancel to keep account"],
     },
   };
 
@@ -5565,6 +5932,29 @@ async function initAdminModeration(user, profile) {
       : '<div class="rounded-2xl bg-white/5 border border-white/10 px-4 py-3 text-sm text-white/60">No admins found.</div>';
   }
 
+  function renderDeletionRequestCard(item) {
+    return `
+      <div class="rounded-3xl bg-white/5 border border-white/10 p-4">
+        <div class="flex items-start justify-between gap-4">
+          <div class="min-w-0">
+            <h3 class="font-semibold">${escapeHtml(item.displayName || item.email || "Oval user")}</h3>
+            <p class="text-sm text-white/55 mt-1">${escapeHtml(item.username ? `@${item.username}` : item.email || "")}</p>
+            <p class="text-sm text-white/70 mt-3">${escapeHtml(item.reason || "No reason was provided.")}</p>
+          </div>
+          <span class="px-3 py-1 rounded-full bg-red-500/15 text-red-200 border border-red-400/30 text-xs">Pending</span>
+        </div>
+        <div class="mt-4 flex flex-wrap gap-2 text-xs text-white/50">
+          <span class="chip px-2.5 py-1 rounded-full">${escapeHtml(item.email || "No email")}</span>
+          <span class="chip px-2.5 py-1 rounded-full">Requested ${escapeHtml(formatRelativeDate(item.requestedAt) || "recently")}</span>
+        </div>
+        <div class="mt-5 flex flex-wrap gap-2">
+          <button type="button" data-deletion-action="approve" data-id="${escapeHtml(item.id)}" class="px-4 py-2 rounded-xl bg-red-500 text-white font-semibold">Delete account</button>
+          <button type="button" data-deletion-action="cancel" data-id="${escapeHtml(item.id)}" class="px-4 py-2 rounded-xl bg-white/10 border border-white/10 text-white font-semibold">Cancel request</button>
+        </div>
+      </div>
+    `;
+  }
+
   function renderCurrentView() {
     const meta = VIEW_META[activeView] || VIEW_META.pending;
     setText("#moderationViewTitle", meta.title);
@@ -5579,6 +5969,16 @@ async function initAdminModeration(user, profile) {
     list?.classList.toggle("hidden", activeView === "admins");
 
     if (!list || activeView === "admins") {
+      return;
+    }
+
+    if (activeView === "deletions") {
+      if (!deletionRequests.length) {
+        list.innerHTML =
+          '<div class="rounded-3xl bg-white/5 border border-white/10 p-6 text-sm text-white/60">No account deletion requests are waiting.</div>';
+        return;
+      }
+      list.innerHTML = deletionRequests.map(renderDeletionRequestCard).join("");
       return;
     }
 
@@ -5642,6 +6042,7 @@ async function initAdminModeration(user, profile) {
   async function refresh() {
     opportunities = await loadAllOpportunities();
     admins = await loadAdminUsers();
+    deletionRequests = await loadAccountDeletionRequests();
     pendingItems = opportunities.filter((item) => item.status === "pending");
     publishedItems = opportunities.filter((item) => item.status === "published");
     archivedItems = opportunities.filter((item) => item.status === "archived");
@@ -5650,6 +6051,7 @@ async function initAdminModeration(user, profile) {
     setText("#moderationPublishedCount", String(publishedItems.length));
     setText("#moderationArchivedCount", String(archivedItems.length));
     setText("#moderationAdminCount", String(admins.length));
+    setText("#moderationDeletionCount", String(deletionRequests.length));
 
     renderAdminEntries();
     renderCurrentView();
@@ -5709,6 +6111,53 @@ async function initAdminModeration(user, profile) {
   });
 
   list?.addEventListener("click", async (event) => {
+    const deletionButton = event.target.closest("[data-deletion-action]");
+    if (deletionButton) {
+      const requestItem = deletionRequests.find((entry) => entry.id === deletionButton.dataset.id);
+      if (!requestItem) {
+        return;
+      }
+      deletionButton.disabled = true;
+      try {
+        if (deletionButton.dataset.deletionAction === "cancel") {
+          await deleteDoc(doc(db, "accountDeletionRequests", requestItem.id));
+          await createNotification(requestItem.uid, {
+            type: "account-deletion-canceled",
+            title: "Deletion request canceled",
+            body: "An admin canceled your account deletion request. Your account will stay active.",
+          });
+          setStatus(status, "Deletion request canceled.", "success");
+          await refresh();
+          return;
+        }
+
+        const confirmed = await confirmAction({
+          title: "Delete this account?",
+          message: "This removes the user from authentication, deletes their profile, and removes their owned posts. This cannot be undone.",
+          confirmLabel: "Delete account",
+          cancelLabel: "Keep account",
+          icon: "warning",
+          tone: "danger",
+        });
+        if (!confirmed) {
+          return;
+        }
+        await processAccountDeletionRequest({
+          user,
+          targetUid: requestItem.uid,
+          action: "approve",
+        });
+        setStatus(status, "Account deleted successfully.", "success");
+        await refresh();
+      } catch (error) {
+        console.error(error);
+        setStatus(status, error.message || "Account deletion failed.", "error");
+      } finally {
+        deletionButton.disabled = false;
+      }
+      return;
+    }
+
     const button = event.target.closest("[data-moderation-action]");
     if (!button) {
       return;
@@ -5897,6 +6346,8 @@ async function initSettings(user, profile) {
   const email = qs("#settingsEmail");
   const form = qs("#settingsProfileForm");
   const displayNameInput = qs("#settingsDisplayName");
+  const usernameInput = qs("#settingsUsername");
+  const usernameHelp = qs("#settingsUsernameHelp");
   const bioInput = qs("#settingsBio");
   const profileLink = qs("#settingsProfileLink");
   const dashboardLink = qs("#settingsDashboardLink");
@@ -5916,6 +6367,9 @@ async function initSettings(user, profile) {
   if (displayNameInput) {
     displayNameInput.value = profile.displayName || "";
   }
+  if (usernameInput) {
+    usernameInput.value = profile.username || "";
+  }
   if (bioInput) {
     bioInput.value = profile.bio || defaultBio();
   }
@@ -5924,6 +6378,21 @@ async function initSettings(user, profile) {
   }
   dashboardLink?.classList.remove("hidden");
   moderationLink?.classList.toggle("hidden", profile.role !== "admin");
+
+  function paintUsernameHelpText(currentProfile) {
+    if (!usernameHelp) {
+      return;
+    }
+    const cooldown = usernameCooldownInfo(currentProfile);
+    usernameHelp.textContent = cooldown.canChange
+      ? "Usernames are unique. You can change yours now."
+      : `Usernames can be changed once every 14 days. Next change: ${formatDate(cooldown.availableAt)}.`;
+  }
+
+  paintUsernameHelpText(profile);
+  usernameInput?.addEventListener("blur", () => {
+    usernameInput.value = normalizeUsernameValue(usernameInput.value);
+  });
 
   toggleButtons.forEach((button) => {
     const key = button.dataset.prefKey;
@@ -5957,9 +6426,15 @@ async function initSettings(user, profile) {
   form?.addEventListener("submit", async (event) => {
     event.preventDefault();
     const nextDisplayName = String(displayNameInput?.value || "").trim();
+    const nextUsername = normalizeUsernameValue(usernameInput?.value || "");
     const nextBio = String(bioInput?.value || "").trim();
     if (!nextDisplayName) {
       setStatus(status, "Display name is required.", "error");
+      return;
+    }
+    const validationError = usernameValidationError(nextUsername);
+    if (validationError) {
+      setStatus(status, validationError, "error");
       return;
     }
 
@@ -5976,13 +6451,28 @@ async function initSettings(user, profile) {
     setStatus(status, "");
 
     try {
+      const usernameResult = await changeUsername(user, profile, nextUsername);
+      if (usernameResult.changed) {
+        profile.username = usernameResult.username;
+      }
       await updateDoc(doc(db, "users", user.uid), payload);
       if ((auth.currentUser?.displayName || "") !== nextDisplayName) {
         await updateProfile(auth.currentUser, {
           displayName: nextDisplayName,
         });
       }
+      profile.displayName = nextDisplayName;
+      profile.bio = nextBio || defaultBio();
+      if (usernameResult.changed) {
+        profile.usernameUpdatedAt = Timestamp.now();
+      }
+      writeCachedProfile(user.uid, profile);
       setText(name, nextDisplayName);
+      setText(handle, profileHandleText(profile) || "@oval");
+      if (usernameInput) {
+        usernameInput.value = profile.username || "";
+      }
+      paintUsernameHelpText(profile);
       setStatus(status, "Account settings saved.", "success");
     } catch (error) {
       console.error(error);
@@ -6000,11 +6490,93 @@ async function initSettings(user, profile) {
       return;
     }
     try {
+      clearAuthSessionMarker(user.uid);
       await signOut(auth);
       location.href = "onboarding.html";
     } catch (error) {
       console.error(error);
       setStatus(status, error.message || "Logout failed.", "error");
+    }
+  });
+}
+
+async function initDeleteAccount(user, profile) {
+  const returnTo = "delete-account.html";
+  if (!user || !profile) {
+    setPendingReturnTo(returnTo);
+    location.href = `sign-in-email.html?returnTo=${encodeURIComponent(returnTo)}`;
+    return;
+  }
+
+  const status = qs("#deleteAccountStatus");
+  const email = qs("#deleteAccountEmail");
+  const handle = qs("#deleteAccountHandle");
+  const requestedAtLabel = qs("#deleteAccountRequestedAt");
+  const reasonInput = qs("#deleteAccountReason");
+  const requestButton = qs("#deleteAccountRequestButton");
+  const cancelButton = qs("#deleteAccountCancelButton");
+  const pendingCard = qs("#deleteAccountPendingCard");
+  const idleCard = qs("#deleteAccountIdleCard");
+  let deletionRequest = await loadOwnAccountDeletionRequest(user.uid);
+
+  setText(email, profile.email || user.email || "");
+  setText(handle, profileHandleText(profile) || "@oval");
+
+  function paintRequestState() {
+    const hasPending = Boolean(deletionRequest);
+    pendingCard?.classList.toggle("hidden", !hasPending);
+    idleCard?.classList.toggle("hidden", hasPending);
+    if (requestedAtLabel) {
+      requestedAtLabel.textContent = deletionRequest?.requestedAt
+        ? formatDate(deletionRequest.requestedAt)
+        : "";
+    }
+    if (reasonInput && !hasPending) {
+      reasonInput.value = "";
+    }
+  }
+
+  paintRequestState();
+
+  requestButton?.addEventListener("click", async () => {
+    const confirmed = await confirmAction({
+      title: "Request account deletion?",
+      message: "Your request will be sent to an admin. If you sign back in before deletion is processed, the request will be removed.",
+      confirmLabel: "Request deletion",
+      cancelLabel: "Keep account",
+      icon: "warning",
+      tone: "danger",
+    });
+    if (!confirmed) {
+      return;
+    }
+    requestButton.disabled = true;
+    setStatus(status, "");
+    try {
+      deletionRequest = await requestAccountDeletion(user, profile, String(reasonInput?.value || ""));
+      paintRequestState();
+      setStatus(status, "Deletion request submitted. An admin will review it before anything is removed.", "success");
+    } catch (error) {
+      console.error(error);
+      setStatus(status, error.message || "Deletion request failed.", "error");
+    } finally {
+      requestButton.disabled = false;
+    }
+  });
+
+  cancelButton?.addEventListener("click", async () => {
+    cancelButton.disabled = true;
+    setStatus(status, "");
+    try {
+      await cancelOwnAccountDeletionRequest(user.uid);
+      deletionRequest = null;
+      paintRequestState();
+      setStatus(status, "Deletion request canceled.", "success");
+    } catch (error) {
+      console.error(error);
+      setStatus(status, error.message || "Could not cancel the deletion request.", "error");
+    } finally {
+      cancelButton.disabled = false;
     }
   });
 }
@@ -6020,9 +6592,18 @@ async function main() {
     profileRefreshPromise = ensureUserProfile(user)
       .then((freshProfile) => {
         profile = freshProfile;
-        writeCachedProfile(user.uid, freshProfile);
-        applyNavForRole(freshProfile);
-        return freshProfile;
+        return clearAccountDeletionRequestOnReturn(user)
+          .catch((error) => {
+            console.warn("Deletion request cleanup failed.", error);
+            return false;
+          })
+          .then(() => ensureUserProfile(user))
+          .then((stableProfile) => {
+            profile = stableProfile;
+            writeCachedProfile(user.uid, stableProfile);
+            applyNavForRole(stableProfile);
+            return stableProfile;
+          });
       })
       .catch((error) => {
         console.warn("Profile bootstrap failed, using cached profile.", error);
@@ -6096,11 +6677,16 @@ async function main() {
   }
   if (page === "settings") {
     await initSettings(user, profile);
+    return;
+  }
+  if (page === "delete-account") {
+    await initDeleteAccount(user, profile);
   }
 }
 
 ensurePwaShellMeta();
 showAppLoader();
+wireHistoryBackLinks();
 wireLoadingTransitions();
 registerServiceWorker();
 
