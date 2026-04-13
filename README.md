@@ -1,6 +1,6 @@
 # Oval
 
-Oval is a mobile-first opportunity discovery app backed by Firebase, with a Vercel serverless moderation endpoint for Groq-assisted automatic post review.
+Oval is a mobile-first opportunity discovery app backed by Firebase, with Vercel serverless functions for Groq-assisted automatic post review and automatic archival of expired posts.
 
 ## Included flows
 
@@ -24,7 +24,7 @@ This static local server is enough for frontend work, but the AI moderation rout
 
 ## Deploy on Vercel
 
-This project serves static app files from the repo root and uses a Vercel serverless function for Groq-assisted post moderation.
+This project serves static app files from the repo root and uses Vercel serverless functions for Groq-assisted post moderation and automatic archival of expired published posts.
 
 ### Option 1: Deploy from GitHub
 
@@ -54,8 +54,11 @@ The auto-approval flow runs in [api/review-opportunity.js](api/review-opportunit
 - `OVAL_FIREBASE_PROJECT_ID`
 - `OVAL_FIREBASE_CLIENT_EMAIL`
 - `OVAL_FIREBASE_PRIVATE_KEY`
+- `CRON_SECRET` for the daily archival cron on [api/archive-expired-opportunities.js](api/archive-expired-opportunities.js)
 
 If the moderation endpoint is unavailable, Oval falls back to manual admin review for new submissions. Live post edits by non-admins intentionally do not bypass that server review path.
+
+Expired published posts are hidden immediately by the client once their deadline passes, and Vercel also runs a daily production cron to flip their Firestore status to `archived` automatically.
 
 ## Firebase setup
 

@@ -1,4 +1,11 @@
 {
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "crons": [
+    {
+      "path": "/api/archive-expired-opportunities",
+      "schedule": "5 1 * * *"
+    }
+  ],
   "redirects": [
     {
       "source": "/",
