@@ -30,26 +30,31 @@
 
       <div class="grid lg:grid-cols-[280px,1fr]">
         <div class="border-r border-white/10 p-4 space-y-3">
-          <div class="rounded-2xl bg-white text-black p-4">
+          <button type="button" data-moderation-view-card="pending" class="w-full rounded-2xl bg-white text-black p-4 text-left transition">
             <p class="text-sm">Pending review</p>
             <p id="moderationPendingCount" class="text-3xl font-bold mt-2">0</p>
-          </div>
-          <div class="rounded-2xl bg-white/5 border border-white/10 p-4">
+          </button>
+          <button type="button" data-moderation-view-card="published" class="w-full rounded-2xl bg-white/5 border border-white/10 p-4 text-left transition">
             <p class="text-sm text-white/60">Live posts</p>
             <p id="moderationPublishedCount" class="text-2xl font-bold mt-2">0</p>
-          </div>
-          <div class="rounded-2xl bg-white/5 border border-white/10 p-4">
+          </button>
+          <button type="button" data-moderation-view-card="archived" class="w-full rounded-2xl bg-white/5 border border-white/10 p-4 text-left transition">
             <p class="text-sm text-white/60">Archived posts</p>
             <p id="moderationArchivedCount" class="text-2xl font-bold mt-2">0</p>
-          </div>
-          <div class="rounded-2xl bg-white/5 border border-white/10 p-4">
+          </button>
+          <button type="button" data-moderation-view-card="admins" class="w-full rounded-2xl bg-white/5 border border-white/10 p-4 text-left transition">
             <p class="text-sm text-white/60">Admins</p>
             <p id="moderationAdminCount" class="text-2xl font-bold mt-2">0</p>
-          </div>
+          </button>
         </div>
 
         <div class="p-4 md:p-6">
-          <div class="rounded-3xl bg-white/5 border border-white/10 p-4 mb-4">
+          <div class="mb-4">
+            <h2 id="moderationViewTitle" class="text-xl font-semibold">Pending review</h2>
+            <p id="moderationViewSubtitle" class="text-sm text-white/60 mt-1">Approve or archive submissions waiting to go live.</p>
+          </div>
+
+          <div id="adminAccessPanel" class="hidden rounded-3xl bg-white/5 border border-white/10 p-4 mb-4">
             <div class="flex items-center justify-between gap-3 flex-wrap">
               <div>
                 <h2 class="font-semibold">Admin access</h2>
@@ -64,7 +69,7 @@
             <div id="adminList" class="mt-4 space-y-3"></div>
           </div>
 
-          <div class="flex flex-wrap gap-2 mb-4">
+          <div id="moderationViewHints" class="flex flex-wrap gap-2 mb-4">
             <span class="chip active-chip px-4 py-2 rounded-full text-sm">Pending queue</span>
             <span class="chip px-4 py-2 rounded-full text-sm">Approve to publish</span>
             <span class="chip px-4 py-2 rounded-full text-sm">Archive to hide</span>

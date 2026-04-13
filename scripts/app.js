@@ -4609,98 +4609,215 @@ async function initAdminModeration(user, profile) {
   const adminEmailInput = qs("#adminEmailInput");
   const adminGrantStatus = qs("#adminGrantStatus");
   const adminList = qs("#adminList");
+  const viewCards = qsa("[data-moderation-view-card]");
+  const viewTitle = qs("#moderationViewTitle");
+  const viewSubtitle = qs("#moderationViewSubtitle");
+  const viewHints = qs("#moderationViewHints");
+  const adminAccessPanel = qs("#adminAccessPanel");
   let opportunities = [];
   let admins = [];
+  let pendingItems = [];
+  let publishedItems = [];
+  let archivedItems = [];
+  let activeView = "pending";
+
+  const VIEW_META = {
+    pending: {
+      title: "Pending review",
+      subtitle: "Approve or archive submissions waiting to go live.",
+      hints: ["Pending queue", "Approve to publish", "Archive to hide"],
+    },
+    published: {
+      title: "Live posts",
+      subtitle: "Currently public opportunities. Archive or delete them when needed.",
+      hints: ["Visible publicly", "Archive to hide", "Delete permanently"],
+    },
+    archived: {
+      title: "Archived posts",
+      subtitle: "Hidden opportunities that can be kept archived, restored, or deleted.",
+      hints: ["Hidden from public", "Publish to restore", "Delete permanently"],
+    },
+    admins: {
+      title: "Admins",
+      subtitle: "Manage current moderators and grant admin access to existing Oval users.",
+      hints: ["Grant admin access", "Review current admins"],
+    },
+  };
+
+  function paintViewCards() {
+    viewCards.forEach((button) => {
+      const isActive = (button.dataset.moderationViewCard || "") === activeView;
+      button.className = isActive
+        ? "w-full rounded-2xl bg-white text-black p-4 text-left transition"
+        : "w-full rounded-2xl bg-white/5 border border-white/10 p-4 text-left transition hover:bg-white/[0.08]";
+      const labels = qsa("p", button);
+      if (labels[0]) {
+        labels[0].className = isActive ? "text-sm" : "text-sm text-white/60";
+      }
+      if (labels[1]) {
+        labels[1].className = isActive ? "text-3xl font-bold mt-2" : "text-2xl font-bold mt-2";
+      }
+    });
+  }
+
+  function renderReviewMeta(item) {
+    const reviewFlags = Array.isArray(item.review?.flags) ? item.review.flags.slice(0, 4) : [];
+    if (!item.review) {
+      return "";
+    }
+    return `
+      <div class="mt-4 rounded-2xl border border-white/10 bg-black/20 p-3">
+        <div class="flex flex-wrap items-center gap-2 text-[11px] text-white/45">
+          <span class="uppercase tracking-[0.22em] text-white/30">Auto review</span>
+          ${item.review?.confidence ? `<span class="chip px-2 py-1 rounded-full">${escapeHtml(item.review.confidence)} confidence</span>` : ""}
+          <span class="chip px-2 py-1 rounded-full">${item.review?.urlVerified ? "URL verified" : "Needs manual URL check"}</span>
+        </div>
+        <p class="text-sm text-white/75 mt-2">${escapeHtml(item.review?.summary || "Awaiting manual review.")}</p>
+        ${reviewFlags.length
+          ? `<div class="mt-3 flex flex-wrap gap-2">${reviewFlags.map((flag) => `<span class="chip px-2 py-1 rounded-full text-[11px]">${escapeHtml(flag)}</span>`).join("")}</div>`
+          : ""}
+      </div>
+    `;
+  }
+
+  function renderModerationOpportunityCard(item, options = {}) {
+    const statusTone = options.statusTone || statusMeta(item.status);
+    return `
+      <div class="rounded-3xl bg-white/5 border border-white/10 p-4">
+        <div class="flex flex-col md:flex-row gap-4">
+          ${renderOpportunityMedia(item, "w-full md:w-56 h-40 rounded-2xl object-cover", { muted: true, loop: true, autoplay: true })}
+          <div class="flex-1">
+            <div class="flex items-start justify-between gap-4">
+              <div>
+                <h3 class="font-semibold">${escapeHtml(item.title)}</h3>
+                <p class="text-sm text-white/60 mt-1">${escapeHtml(item.creatorName || "Oval User")} • ${escapeHtml(item.category)} • ${escapeHtml(item.locationLabel || "Remote")}</p>
+                <p class="text-sm text-white/70 mt-3 max-h-[4.5rem] overflow-hidden">${escapeHtml(item.caption || "")}</p>
+              </div>
+              <span class="px-3 py-1 rounded-full ${statusTone.classes} text-xs">${escapeHtml(statusTone.label)}</span>
+            </div>
+            <div class="mt-4 flex flex-wrap gap-2 text-xs">
+              <span class="chip px-2.5 py-1 rounded-full">${escapeHtml(item.payLabel || "Compensation listed")}</span>
+              <span class="chip px-2.5 py-1 rounded-full">${escapeHtml(item.workMode || "Flexible")}</span>
+              <span class="chip px-2.5 py-1 rounded-full">Submitted ${escapeHtml(formatRelativeDate(item.createdAt) || "recently")}</span>
+            </div>
+            ${renderReviewMeta(item)}
+            <div class="mt-5 flex flex-wrap gap-2">
+              ${options.actions || ""}
+            </div>
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
+  function renderAdminEntries() {
+    if (!adminList) {
+      return;
+    }
+    adminList.innerHTML = admins.length
+      ? admins
+        .map((item) => `
+          <div class="flex items-center justify-between gap-3 rounded-2xl bg-white/5 border border-white/10 px-4 py-3">
+            <div class="min-w-0">
+              <p class="text-sm font-medium truncate">${escapeHtml(item.displayName || item.email || "Admin")}</p>
+              <p class="text-xs text-white/50 truncate mt-1">${escapeHtml(item.email || "")}</p>
+            </div>
+            <span class="text-[10px] px-2 py-1 rounded-full bg-emerald-500/15 text-emerald-200 border border-emerald-500/30">Admin</span>
+          </div>
+        `)
+        .join("")
+      : '<div class="rounded-2xl bg-white/5 border border-white/10 px-4 py-3 text-sm text-white/60">No admins found.</div>';
+  }
+
+  function renderCurrentView() {
+    const meta = VIEW_META[activeView] || VIEW_META.pending;
+    setText("#moderationViewTitle", meta.title);
+    setText("#moderationViewSubtitle", meta.subtitle);
+    if (viewHints) {
+      viewHints.innerHTML = meta.hints
+        .map((item, index) => `<span class="chip ${index === 0 ? "active-chip" : ""} px-4 py-2 rounded-full text-sm">${escapeHtml(item)}</span>`)
+        .join("");
+    }
+    paintViewCards();
+    adminAccessPanel?.classList.toggle("hidden", activeView !== "admins");
+    list?.classList.toggle("hidden", activeView === "admins");
+
+    if (!list || activeView === "admins") {
+      return;
+    }
+
+    if (activeView === "pending") {
+      if (!pendingItems.length) {
+        list.innerHTML =
+          '<div class="rounded-3xl bg-white/5 border border-white/10 p-6 text-sm text-white/60">No posts are waiting for approval.</div>';
+        return;
+      }
+      list.innerHTML = pendingItems
+        .map((item) => renderModerationOpportunityCard(item, {
+          statusTone: {
+            label: "Pending",
+            classes: "bg-amber-500/20 text-amber-200 border border-amber-500/30",
+          },
+          actions: `
+            <a href="${detailsUrl(item.id)}" class="px-4 py-2 rounded-xl bg-white/10 border border-white/10 text-white font-semibold">Preview</a>
+            <button type="button" data-moderation-action="approve" data-id="${escapeHtml(item.id)}" class="px-4 py-2 rounded-xl bg-white text-black font-semibold">Approve</button>
+            <button type="button" data-moderation-action="archive" data-id="${escapeHtml(item.id)}" class="px-4 py-2 rounded-xl bg-red-500 text-white font-semibold">Archive</button>
+            <button type="button" data-moderation-action="delete" data-id="${escapeHtml(item.id)}" class="px-4 py-2 rounded-xl bg-red-500/15 text-red-100 border border-red-400/30 font-semibold">Delete</button>
+          `,
+        }))
+        .join("");
+      return;
+    }
+
+    if (activeView === "published") {
+      if (!publishedItems.length) {
+        list.innerHTML =
+          '<div class="rounded-3xl bg-white/5 border border-white/10 p-6 text-sm text-white/60">No live posts right now.</div>';
+        return;
+      }
+      list.innerHTML = publishedItems
+        .map((item) => renderModerationOpportunityCard(item, {
+          actions: `
+            <a href="${detailsUrl(item.id)}" class="px-4 py-2 rounded-xl bg-white/10 border border-white/10 text-white font-semibold">Preview</a>
+            <button type="button" data-moderation-action="archive" data-id="${escapeHtml(item.id)}" class="px-4 py-2 rounded-xl bg-red-500 text-white font-semibold">Archive</button>
+            <button type="button" data-moderation-action="delete" data-id="${escapeHtml(item.id)}" class="px-4 py-2 rounded-xl bg-red-500/15 text-red-100 border border-red-400/30 font-semibold">Delete</button>
+          `,
+        }))
+        .join("");
+      return;
+    }
+
+    if (!archivedItems.length) {
+      list.innerHTML =
+        '<div class="rounded-3xl bg-white/5 border border-white/10 p-6 text-sm text-white/60">No archived posts right now.</div>';
+      return;
+    }
+    list.innerHTML = archivedItems
+      .map((item) => renderModerationOpportunityCard(item, {
+        actions: `
+          <a href="${detailsUrl(item.id)}" class="px-4 py-2 rounded-xl bg-white/10 border border-white/10 text-white font-semibold">Preview</a>
+          <button type="button" data-moderation-action="approve" data-id="${escapeHtml(item.id)}" class="px-4 py-2 rounded-xl bg-white text-black font-semibold">Publish</button>
+          <button type="button" data-moderation-action="delete" data-id="${escapeHtml(item.id)}" class="px-4 py-2 rounded-xl bg-red-500/15 text-red-100 border border-red-400/30 font-semibold">Delete</button>
+        `,
+      }))
+      .join("");
+  }
 
   async function refresh() {
     opportunities = await loadAllOpportunities();
     admins = await loadAdminUsers();
-    const pendingItems = opportunities.filter((item) => item.status === "pending");
-    const publishedItems = opportunities.filter((item) => item.status === "published");
-    const archivedItems = opportunities.filter((item) => item.status === "archived");
+    pendingItems = opportunities.filter((item) => item.status === "pending");
+    publishedItems = opportunities.filter((item) => item.status === "published");
+    archivedItems = opportunities.filter((item) => item.status === "archived");
 
     setText("#moderationPendingCount", String(pendingItems.length));
     setText("#moderationPublishedCount", String(publishedItems.length));
     setText("#moderationArchivedCount", String(archivedItems.length));
     setText("#moderationAdminCount", String(admins.length));
 
-    if (adminList) {
-      adminList.innerHTML = admins.length
-        ? admins
-          .map((item) => `
-            <div class="flex items-center justify-between gap-3 rounded-2xl bg-white/5 border border-white/10 px-4 py-3">
-              <div class="min-w-0">
-                <p class="text-sm font-medium truncate">${escapeHtml(item.displayName || item.email || "Admin")}</p>
-                <p class="text-xs text-white/50 truncate mt-1">${escapeHtml(item.email || "")}</p>
-              </div>
-              <span class="text-[10px] px-2 py-1 rounded-full bg-emerald-500/15 text-emerald-200 border border-emerald-500/30">Admin</span>
-            </div>
-          `)
-          .join("")
-        : '<div class="rounded-2xl bg-white/5 border border-white/10 px-4 py-3 text-sm text-white/60">No admins found.</div>';
-    }
-
-    if (!list) {
-      return;
-    }
-
-    if (!pendingItems.length) {
-      list.innerHTML =
-        '<div class="rounded-3xl bg-white/5 border border-white/10 p-6 text-sm text-white/60">No posts are waiting for approval.</div>';
-      return;
-    }
-
-    list.innerHTML = pendingItems
-      .map((item) => {
-        const reviewFlags = Array.isArray(item.review?.flags) ? item.review.flags.slice(0, 4) : [];
-        const reviewMeta = item.review
-          ? `
-            <div class="mt-4 rounded-2xl border border-white/10 bg-black/20 p-3">
-              <div class="flex flex-wrap items-center gap-2 text-[11px] text-white/45">
-                <span class="uppercase tracking-[0.22em] text-white/30">Auto review</span>
-                ${item.review?.confidence ? `<span class="chip px-2 py-1 rounded-full">${escapeHtml(item.review.confidence)} confidence</span>` : ""}
-                <span class="chip px-2 py-1 rounded-full">${item.review?.urlVerified ? "URL verified" : "Needs manual URL check"}</span>
-              </div>
-              <p class="text-sm text-white/75 mt-2">${escapeHtml(item.review?.summary || "Awaiting manual review.")}</p>
-              ${reviewFlags.length
-                ? `<div class="mt-3 flex flex-wrap gap-2">${reviewFlags.map((flag) => `<span class="chip px-2 py-1 rounded-full text-[11px]">${escapeHtml(flag)}</span>`).join("")}</div>`
-                : ""}
-            </div>
-          `
-          : "";
-        return `
-        <div class="rounded-3xl bg-white/5 border border-white/10 p-4">
-          <div class="flex flex-col md:flex-row gap-4">
-            ${renderOpportunityMedia(item, "w-full md:w-56 h-40 rounded-2xl object-cover", { muted: true, loop: true, autoplay: true })}
-            <div class="flex-1">
-              <div class="flex items-start justify-between gap-4">
-                <div>
-                  <h3 class="font-semibold">${escapeHtml(item.title)}</h3>
-                  <p class="text-sm text-white/60 mt-1">${escapeHtml(item.creatorName || "Oval User")} • ${escapeHtml(item.category)} • ${escapeHtml(item.locationLabel || "Remote")}</p>
-                  <p class="text-sm text-white/70 mt-3 max-h-[4.5rem] overflow-hidden">${escapeHtml(item.caption || "")}</p>
-                </div>
-                <span class="px-3 py-1 rounded-full bg-amber-500/20 text-amber-200 text-xs border border-amber-500/30">Pending</span>
-              </div>
-              <div class="mt-4 flex flex-wrap gap-2 text-xs">
-                <span class="chip px-2.5 py-1 rounded-full">${escapeHtml(item.payLabel || "Compensation listed")}</span>
-                <span class="chip px-2.5 py-1 rounded-full">${escapeHtml(item.workMode || "Flexible")}</span>
-                <span class="chip px-2.5 py-1 rounded-full">Submitted ${escapeHtml(formatRelativeDate(item.createdAt) || "recently")}</span>
-              </div>
-              ${reviewMeta}
-              <div class="mt-5 flex flex-wrap gap-2">
-                <a href="${detailsUrl(item.id)}" class="px-4 py-2 rounded-xl bg-white/10 border border-white/10 text-white font-semibold">Preview</a>
-                <button type="button" data-moderation-action="approve" data-id="${escapeHtml(item.id)}" class="px-4 py-2 rounded-xl bg-white text-black font-semibold">Approve</button>
-                <button type="button" data-moderation-action="archive" data-id="${escapeHtml(item.id)}" class="px-4 py-2 rounded-xl bg-red-500 text-white font-semibold">Archive</button>
-                <button type="button" data-moderation-action="delete" data-id="${escapeHtml(item.id)}" class="px-4 py-2 rounded-xl bg-red-500/15 text-red-100 border border-red-400/30 font-semibold">Delete</button>
-              </div>
-            </div>
-          </div>
-        </div>
-      `;
-      })
-      .join("");
+    renderAdminEntries();
+    renderCurrentView();
   }
-
   adminForm?.addEventListener("submit", async (event) => {
     event.preventDefault();
     const email = normalizeEmail(adminEmailInput?.value);
@@ -4746,6 +4863,13 @@ async function initAdminModeration(user, profile) {
         submitButton.disabled = false;
       }
     }
+  });
+
+  viewCards.forEach((button) => {
+    button.addEventListener("click", () => {
+      activeView = button.dataset.moderationViewCard || "pending";
+      renderCurrentView();
+    });
   });
 
   list?.addEventListener("click", async (event) => {
