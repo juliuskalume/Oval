@@ -1,6 +1,7 @@
 import { cert, getApps, initializeApp } from "firebase-admin/app";
 import { getAuth } from "firebase-admin/auth";
 import { Timestamp, getFirestore } from "firebase-admin/firestore";
+import { createNotificationAndPush } from "./_lib/push.js";
 
 const BOOTSTRAP_ADMIN_EMAILS = new Set([
   "juliuskalume906@gmail.com",
@@ -237,6 +238,18 @@ function normalizeDeadline(value) {
   const date = new Date(raw);
   if (Number.isNaN(date.getTime())) {
     return new Date(Date.now() + 1000 * 60 * 60 * 24 * 30).toISOString();
+  }
+  return date.toISOString();
+}
+
+function normalizeOptionalDate(value) {
+  const raw = String(value || "").trim();
+  if (!raw) {
+    return "";
+  }
+  const date = new Date(raw);
+  if (Number.isNaN(date.getTime())) {
+    return "";
   }
   return date.toISOString();
 }
@@ -813,15 +826,11 @@ function decideReviewOutcome(payload, inspection, aiReview, metadataFlags) {
   };
 }
 
-async function createNotification(db, uid, payload) {
-  if (!uid) {
-    return;
-  }
-  await db.collection("users").doc(uid).collection("notifications").add({
-    ...payload,
-    read: false,
-    createdAt: Timestamp.now(),
-  });
+async function loadAdminUids(db) {
+  const snapshot = await db.collection("users").where("role", "==", "admin").get();
+  return snapshot.docs
+    .map((docSnapshot) => docSnapshot.id)
+    .filter(Boolean);
 }
 
 function sanitizeOpportunityPayload(rawPayload, user, profile, existingOpportunity = null) {
@@ -855,6 +864,7 @@ function sanitizeOpportunityPayload(rawPayload, user, profile, existingOpportuni
     locationLabel: sanitizeString(raw.locationLabel, 120),
     workMode,
     payLabel: sanitizeString(raw.payLabel, 80),
+    openingAt: normalizeOptionalDate(raw.openingAt || raw.openingDate || raw.opensAt),
     deadlineAt: normalizeDeadline(raw.deadlineAt),
     tags: sanitizeHashtags(raw.tags?.length ? raw.tags : extractHashtags(caption)),
     eligibility: sanitizeList(raw.eligibility),
@@ -929,6 +939,9 @@ export default async function handler(request, response) {
     }
 
     const payload = sanitizeOpportunityPayload(body.payload, user, profile, existingOpportunity);
+    if (payload.openingAt && new Date(payload.openingAt).getTime() > new Date(payload.deadlineAt).getTime()) {
+      throw new HttpError(400, "Opening date cannot be after the deadline.");
+    }
     const visualModerationFrames = sanitizeVisualModerationFrames(body.visualModerationFrames);
     const now = Timestamp.now();
     const visualReview = await reviewVisualSafety(payload, visualModerationFrames);
@@ -967,6 +980,7 @@ export default async function handler(request, response) {
 
     const documentPayload = compact({
       ...payload,
+      openingAt: payload.openingAt ? Timestamp.fromDate(new Date(payload.openingAt)) : null,
       deadlineAt: Timestamp.fromDate(new Date(payload.deadlineAt)),
       status: outcome.status,
       review: outcome.review,
@@ -990,12 +1004,25 @@ export default async function handler(request, response) {
     }
 
     if (!isAdmin && outcome.status === "published") {
-      await createNotification(db, user.uid, {
+      await createNotificationAndPush(user.uid, {
         type: "moderation-approved",
         title: "Opportunity approved automatically",
         body: `${payload.title} passed automatic verification and is now live.`,
         opportunityId: opportunityRef.id,
-      });
+      }, { db, createdAt: now.toDate() });
+    }
+
+    if (!isAdmin && outcome.status === "pending") {
+      const adminUids = await loadAdminUids(db);
+      await Promise.all(
+        adminUids.map((adminUid) => createNotificationAndPush(adminUid, {
+          type: "opportunity-pending-review",
+          title: "New post pending approval",
+          body: `${payload.title} is waiting for review.`,
+          opportunityId: opportunityRef.id,
+          profileUid: user.uid,
+        }, { db, createdAt: now.toDate() })),
+      );
     }
 
     json(response, 200, {

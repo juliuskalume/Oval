@@ -6,12 +6,17 @@ import {
   collection,
   createUserWithEmailAndPassword,
   db,
+  deleteToken as deleteMessagingToken,
   deleteDoc,
   doc,
   getDoc,
   getDocs,
+  getToken as getMessagingToken,
+  getDownloadURL,
   googleProvider,
+  messagingReady,
   onAuthStateChanged,
+  onMessage as onForegroundMessage,
   orderBy,
   query,
   ref,
@@ -25,7 +30,6 @@ import {
   updateDoc,
   updateProfile,
   uploadBytes,
-  getDownloadURL,
   where,
 } from "./firebase.js";
 import { DEMO_COMMENTS, DEMO_OPPORTUNITIES } from "./sample-data.js";
@@ -65,6 +69,19 @@ const USERNAME_MAX_LENGTH = 32;
 const USERNAME_COOLDOWN_MS = 14 * 24 * 60 * 60 * 1000;
 const AUTH_SESSION_PREFIX = "oval.auth.session.";
 const ACCOUNT_DELETION_REASON_MAX_LENGTH = 300;
+const PUSH_INSTALLATION_KEY = "oval.push.installationId";
+const PUSH_CONFIG_CACHE_KEY = "oval.push.config";
+const PUSH_TOKEN_SYNC_KEY = "oval.push.lastToken";
+const PUSH_PLATFORM_KEY = "oval.push.lastPlatform";
+const PUSH_NATIVE_PERMISSION_CACHE_KEY = "oval.push.nativePermission";
+const PUSH_BOUND_UID_KEY = "oval.push.boundUid";
+const PUSH_CONFIG_TTL_MS = 1000 * 60 * 60 * 6;
+const DEADLINE_REMINDER_STAGES = [
+  { key: "1w", label: "1 week", ms: 7 * 24 * 60 * 60 * 1000 },
+  { key: "3d", label: "3 days", ms: 3 * 24 * 60 * 60 * 1000 },
+  { key: "1d", label: "1 day", ms: 24 * 60 * 60 * 1000 },
+  { key: "1h", label: "1 hour", ms: 60 * 60 * 1000 },
+];
 const TAP_HAPTIC_SELECTOR = [
   'a[href]',
   'button',
@@ -102,6 +119,13 @@ const DEFAULT_SETTINGS_PREFS = {
 };
 
 const page = document.body.dataset.page || "";
+const nativePushState = {
+  token: "",
+  permission: readStoredJson(PUSH_NATIVE_PERMISSION_CACHE_KEY, "default") || "default",
+  tokenResolver: null,
+  permissionResolver: null,
+  foregroundListenerReady: false,
+};
 
 const authReady = new Promise((resolve) => {
   let settled = false;
@@ -533,13 +557,6 @@ async function changeUsername(user, profile, requestedUsername) {
     changed: true,
   };
 }
-
-function nativeBridgeMethod(name) {
-  return typeof window !== "undefined" && typeof window.OvalAndroid?.[name] === "function"
-    ? window.OvalAndroid[name].bind(window.OvalAndroid)
-    : null;
-}
-
 function triggerTouchHaptic(style = "tap") {
   const nativeHaptic = nativeBridgeMethod("performHaptic");
   if (nativeHaptic) {
@@ -660,6 +677,401 @@ function writeStoredJson(key, value) {
   } catch (error) {}
 }
 
+function installationIdValue() {
+  let existing = "";
+  try {
+    existing = localStorage.getItem(PUSH_INSTALLATION_KEY) || "";
+  } catch (error) {}
+  if (existing) {
+    return existing;
+  }
+  const generated = typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+    ? crypto.randomUUID()
+    : `oval-${Date.now()}-${Math.random().toString(36).slice(2, 12)}`;
+  try {
+    localStorage.setItem(PUSH_INSTALLATION_KEY, generated);
+  } catch (error) {}
+  return generated;
+}
+
+function absoluteAppUrl(path = "inbox.html") {
+  try {
+    return new URL(path, location.origin.endsWith("/") ? location.origin : `${location.origin}/`).toString();
+  } catch (error) {
+    return path;
+  }
+}
+
+function pushTargetUrlForNotification(item) {
+  return absoluteAppUrl(notificationDestination(item) || "inbox.html");
+}
+
+async function loadPushConfig(forceRefresh = false) {
+  const cached = !forceRefresh ? readStoredJson(PUSH_CONFIG_CACHE_KEY, null) : null;
+  if (cached?.fetchedAt && Date.now() - Number(cached.fetchedAt || 0) < PUSH_CONFIG_TTL_MS) {
+    return cached;
+  }
+
+  const response = await fetch("/api/push-config", {
+    headers: {
+      Accept: "application/json",
+    },
+  });
+  if (!response.ok) {
+    const rawText = await response.text();
+    throw new Error(rawText || "Push configuration is unavailable.");
+  }
+
+  const config = await response.json();
+  const payload = {
+    vapidKey: String(config?.vapidKey || "").trim(),
+    appBaseUrl: String(config?.appBaseUrl || location.origin).trim() || location.origin,
+    fetchedAt: Date.now(),
+  };
+  writeStoredJson(PUSH_CONFIG_CACHE_KEY, payload);
+  return payload;
+}
+
+function isNativeAndroidShell() {
+  return typeof window !== "undefined" && Boolean(window.OvalAndroid);
+}
+
+function notificationPermissionStatus() {
+  if (isNativeAndroidShell()) {
+    return nativePushState.permission || "default";
+  }
+  if (typeof Notification === "undefined") {
+    return "unsupported";
+  }
+  return Notification.permission;
+}
+
+function rememberNativePermission(status) {
+  nativePushState.permission = status || "default";
+  writeStoredJson(PUSH_NATIVE_PERMISSION_CACHE_KEY, nativePushState.permission);
+}
+
+function nativePushBridgeMethod(name) {
+  return typeof window !== "undefined" && typeof window.OvalAndroid?.[name] === "function"
+    ? window.OvalAndroid[name].bind(window.OvalAndroid)
+    : null;
+}
+
+function waitForNativePushPermissionResult() {
+  return new Promise((resolve) => {
+    nativePushState.permissionResolver = resolve;
+  });
+}
+
+function waitForNativePushTokenResult() {
+  return new Promise((resolve) => {
+    nativePushState.tokenResolver = resolve;
+  });
+}
+
+function tokenMetaPlatform() {
+  return isNativeAndroidShell() ? "android-native" : "web-pwa";
+}
+
+async function upsertPushInstallation(user, token, metadata = {}) {
+  if (!user?.uid || !token) {
+    return;
+  }
+  const installationId = installationIdValue();
+  const previousBoundUid = (() => {
+    try {
+      return localStorage.getItem(PUSH_BOUND_UID_KEY) || "";
+    } catch (error) {
+      return "";
+    }
+  })();
+  if (previousBoundUid && previousBoundUid !== user.uid) {
+    await deleteDoc(doc(db, "users", previousBoundUid, "pushTokens", installationId)).catch(() => {});
+  }
+  const tokenRef = doc(db, "users", user.uid, "pushTokens", installationId);
+  const snapshot = await getDoc(tokenRef);
+  await setDoc(tokenRef, {
+    installationId,
+    token,
+    platform: metadata.platform || tokenMetaPlatform(),
+    permission: metadata.permission || notificationPermissionStatus(),
+    userAgent: metadata.userAgent || navigator.userAgent || "",
+    nativeBridge: metadata.nativeBridge === true,
+    createdAt: snapshot.exists() ? snapshot.data()?.createdAt || Timestamp.now() : Timestamp.now(),
+    updatedAt: Timestamp.now(),
+  }, { merge: true });
+  try {
+    localStorage.setItem(PUSH_TOKEN_SYNC_KEY, token);
+    localStorage.setItem(PUSH_PLATFORM_KEY, metadata.platform || tokenMetaPlatform());
+    localStorage.setItem(PUSH_BOUND_UID_KEY, user.uid);
+  } catch (error) {}
+}
+
+async function removePushInstallation(user, options = {}) {
+  if (!user?.uid) {
+    return;
+  }
+  const installationId = installationIdValue();
+  await deleteDoc(doc(db, "users", user.uid, "pushTokens", installationId)).catch(() => {});
+  if (options.deleteWebToken) {
+    const messaging = await messagingReady.catch(() => null);
+    if (messaging) {
+      await deleteMessagingToken(messaging).catch(() => {});
+    }
+  }
+  try {
+    localStorage.removeItem(PUSH_TOKEN_SYNC_KEY);
+    localStorage.removeItem(PUSH_PLATFORM_KEY);
+    localStorage.removeItem(PUSH_BOUND_UID_KEY);
+  } catch (error) {}
+}
+
+async function dispatchPushNotification(recipientUid, notificationId) {
+  if (!recipientUid || !notificationId) {
+    return;
+  }
+  const user = auth.currentUser || (await withTimeout(authReady, 1200).catch(() => null));
+  if (!user) {
+    return;
+  }
+  const idToken = await user.getIdToken();
+  const response = await fetch("/api/dispatch-notification", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${idToken}`,
+    },
+    body: JSON.stringify({
+      recipientUid,
+      notificationId,
+    }),
+  });
+  if (!response.ok) {
+    const rawText = await response.text();
+    throw new Error(rawText || "Push dispatch failed.");
+  }
+}
+
+function notificationToastTarget() {
+  return qs("#notificationsList")
+    || qs("#detailsStatus")
+    || qs("#createPostStatus")
+    || qs("#profileStatus")
+    || qs("#settingsStatus")
+    || qs("#feedStatus");
+}
+
+function showForegroundPushNotification(payload) {
+  const notification = payload?.notification || {};
+  const data = payload?.data || {};
+  const title = notification.title || data.title || "Oval";
+  const body = notification.body || data.body || "You have a new update.";
+  const target = notificationToastTarget();
+  if (target) {
+    setStatus(target, `${title}: ${body}`, "info");
+    return;
+  }
+  if (typeof Notification !== "undefined" && Notification.permission === "granted" && document.visibilityState !== "visible") {
+    const instance = new Notification(title, {
+      body,
+      icon: "assets/pwa/icon-any-192.png",
+      badge: "assets/pwa/icon-any-192.png",
+      tag: data.notificationId || `oval-${Date.now()}`,
+      data: {
+        targetUrl: data.targetUrl || "inbox.html",
+      },
+    });
+    instance.onclick = () => {
+      window.focus();
+      location.href = data.targetUrl || "inbox.html";
+      instance.close();
+    };
+  }
+}
+
+async function ensureForegroundPushListener() {
+  if (nativePushState.foregroundListenerReady) {
+    return;
+  }
+  const messaging = await messagingReady.catch(() => null);
+  if (!messaging) {
+    return;
+  }
+  onForegroundMessage(messaging, async (payload) => {
+    try {
+      const user = auth.currentUser || (await withTimeout(authReady, 1200).catch(() => null));
+      await refreshInboxNavIndicator(user);
+    } catch (error) {}
+    if (document.visibilityState !== "visible") {
+      showForegroundPushNotification(payload);
+    }
+  });
+  nativePushState.foregroundListenerReady = true;
+}
+
+function installNativePushBridge() {
+  if (typeof window === "undefined" || window.__ovalNativePushBridgeInstalled) {
+    return;
+  }
+  window.__ovalNativePushBridgeInstalled = true;
+  window.ovalNativePushPermissionResult = (status) => {
+    rememberNativePermission(String(status || "default"));
+    const resolver = nativePushState.permissionResolver;
+    nativePushState.permissionResolver = null;
+    if (resolver) {
+      resolver(nativePushState.permission);
+    }
+  };
+  window.ovalNativePushToken = (token) => {
+    nativePushState.token = String(token || "").trim();
+    const resolver = nativePushState.tokenResolver;
+    nativePushState.tokenResolver = null;
+    if (resolver) {
+      resolver(nativePushState.token);
+    }
+  };
+  window.ovalNativePushError = (message) => {
+    const tokenResolver = nativePushState.tokenResolver;
+    nativePushState.tokenResolver = null;
+    if (tokenResolver) {
+      tokenResolver("");
+    }
+    const permissionResolver = nativePushState.permissionResolver;
+    nativePushState.permissionResolver = null;
+    if (permissionResolver) {
+      permissionResolver(nativePushState.permission || "denied");
+    }
+    console.warn("Native push bridge error.", message);
+  };
+}
+
+async function resolveNativePushToken(options = {}) {
+  const requestPermission = options.prompt === true;
+  const requestPermissionBridge = nativePushBridgeMethod(requestPermission ? "requestPushPermission" : "syncPushToken");
+  if (requestPermissionBridge) {
+    const permissionPromise = waitForNativePushPermissionResult();
+    requestPermissionBridge();
+    const permission = await permissionPromise.catch(() => nativePushState.permission || "default");
+    if (permission !== "granted") {
+      return {
+        permission,
+        token: "",
+      };
+    }
+  } else if ((nativePushState.permission || "default") !== "granted") {
+    return {
+      permission: nativePushState.permission || "default",
+      token: "",
+    };
+  }
+
+  const syncBridge = nativePushBridgeMethod("syncPushToken");
+  if (!syncBridge) {
+    return {
+      permission: nativePushState.permission || "granted",
+      token: nativePushState.token || "",
+    };
+  }
+
+  const tokenPromise = waitForNativePushTokenResult();
+  syncBridge();
+  const token = await tokenPromise.catch(() => "");
+  return {
+    permission: nativePushState.permission || "granted",
+    token,
+  };
+}
+
+async function syncPushNotifications(user, options = {}) {
+  if (!user?.uid) {
+    return {
+      supported: false,
+      enabled: false,
+      permission: "default",
+    };
+  }
+
+  if (isNativeAndroidShell()) {
+    const nativeResult = await resolveNativePushToken(options);
+    if (nativeResult.permission !== "granted" || !nativeResult.token) {
+      await removePushInstallation(user).catch(() => {});
+      return {
+        supported: true,
+        enabled: false,
+        permission: nativeResult.permission,
+      };
+    }
+    await upsertPushInstallation(user, nativeResult.token, {
+      platform: "android-native",
+      permission: nativeResult.permission,
+      nativeBridge: true,
+    });
+    return {
+      supported: true,
+      enabled: true,
+      permission: nativeResult.permission,
+    };
+  }
+
+  if (typeof Notification === "undefined" || !("serviceWorker" in navigator)) {
+    return {
+      supported: false,
+      enabled: false,
+      permission: "unsupported",
+    };
+  }
+
+  let permission = Notification.permission;
+  if (options.prompt === true && permission === "default") {
+    permission = await Notification.requestPermission();
+  }
+  if (permission !== "granted") {
+    await removePushInstallation(user).catch(() => {});
+    return {
+      supported: true,
+      enabled: false,
+      permission,
+    };
+  }
+
+  const messaging = await messagingReady.catch(() => null);
+  if (!messaging) {
+    return {
+      supported: false,
+      enabled: false,
+      permission: "unsupported",
+    };
+  }
+
+  const pushConfig = await loadPushConfig();
+  if (!pushConfig.vapidKey) {
+    throw new Error("Push notifications are not configured yet.");
+  }
+  const registration = await navigator.serviceWorker.ready;
+  const token = await getMessagingToken(messaging, {
+    vapidKey: pushConfig.vapidKey,
+    serviceWorkerRegistration: registration,
+  });
+  if (!token) {
+    return {
+      supported: true,
+      enabled: false,
+      permission,
+    };
+  }
+  await upsertPushInstallation(user, token, {
+    platform: "web-pwa",
+    permission,
+    nativeBridge: false,
+  });
+  await ensureForegroundPushListener();
+  return {
+    supported: true,
+    enabled: true,
+    permission,
+  };
+}
+
 function toDate(value) {
   if (!value) {
     return null;
@@ -687,9 +1099,14 @@ function serializeOpportunityForCache(opportunity) {
     ...opportunity,
     createdAt: serializeDateForCache(opportunity.createdAt),
     updatedAt: serializeDateForCache(opportunity.updatedAt),
+    openingAt: serializeDateForCache(opportunity.openingAt),
     deadlineAt: serializeDateForCache(opportunity.deadlineAt || opportunity.deadline),
     deadline: serializeDateForCache(opportunity.deadlineAt || opportunity.deadline),
   };
+}
+
+function opportunityOpeningDate(opportunity) {
+  return toDate(opportunity?.openingAt || opportunity?.openingDate || opportunity?.opensAt);
 }
 
 function opportunityDeadline(opportunity) {
@@ -723,6 +1140,11 @@ function deadlineExpiryDate(opportunity) {
 function isOpportunityExpired(opportunity, now = new Date()) {
   const expiry = deadlineExpiryDate(opportunity);
   return Boolean(expiry && expiry.getTime() < now.getTime());
+}
+
+function isOpportunityOpeningInFuture(opportunity, now = new Date()) {
+  const opening = opportunityOpeningDate(opportunity);
+  return Boolean(opening && opening.getTime() > now.getTime());
 }
 
 function isOpportunityPubliclyVisible(opportunity, now = new Date()) {
@@ -1079,12 +1501,18 @@ async function buildVideoModerationFrames(coverFile, attachmentFiles = [], exist
 }
 
 function opportunityDraftToFirestorePayload(draft, status) {
-  return {
+  const payload = {
     ...draft,
     deadlineAt: Timestamp.fromDate(new Date(draft.deadlineAt)),
     status,
     updatedAt: Timestamp.now(),
   };
+  if (draft.openingAt) {
+    payload.openingAt = Timestamp.fromDate(new Date(draft.openingAt));
+  } else {
+    payload.openingAt = null;
+  }
+  return payload;
 }
 
 async function submitOpportunityReviewRequest({ user, mode, opportunityId, payload, visualModerationFrames = [] }) {
@@ -2001,13 +2429,17 @@ async function refreshInboxNavIndicator(user, options = {}) {
 
 async function createNotification(uid, payload) {
   if (!uid) {
-    return;
+    return null;
   }
-  await addDoc(collection(db, "users", uid, "notifications"), {
+  const notificationRef = await addDoc(collection(db, "users", uid, "notifications"), {
     ...payload,
     read: false,
     createdAt: Timestamp.now(),
   });
+  dispatchPushNotification(uid, notificationRef.id).catch((error) => {
+    console.warn("Push notification dispatch failed.", error);
+  });
+  return notificationRef.id;
 }
 
 function notificationDestination(item) {
@@ -2045,6 +2477,15 @@ function notificationIcon(item) {
   if (item?.type === "account-deletion-canceled") {
     return "undo";
   }
+  if (item?.type === "opening-reminder") {
+    return "event_upcoming";
+  }
+  if (item?.type === "deadline-reminder") {
+    return "alarm";
+  }
+  if (item?.type === "opportunity-pending-review") {
+    return "pending_actions";
+  }
   if (item?.type?.includes("application")) {
     return "task_alt";
   }
@@ -2075,6 +2516,9 @@ function notificationFilterCategory(item) {
     || item?.type === "moderation-approved"
     || item?.type === "moderation-archived"
     || item?.type === "moderation-deleted"
+    || item?.type === "opportunity-pending-review"
+    || item?.type === "opening-reminder"
+    || item?.type === "deadline-reminder"
   ) {
     return "opportunities";
   }
@@ -3112,6 +3556,35 @@ async function updateLikedState(opportunity, desiredLiked) {
   });
 }
 
+async function updateOpeningReminderState(opportunity, desiredReminder) {
+  const user = await requireUserForAction();
+  const stateRef = doc(db, "users", user.uid, "states", opportunity.id);
+
+  await runTransaction(db, async (transaction) => {
+    const stateSnapshot = await transaction.get(stateRef);
+    const current = stateSnapshot.exists() ? stateSnapshot.data() : {};
+    const currentReminder = Boolean(current.openingReminder);
+    if (currentReminder === desiredReminder) {
+      return;
+    }
+    transaction.set(
+      stateRef,
+      {
+        ...opportunitySnapshot(opportunity),
+        saved: Boolean(current.saved),
+        applied: Boolean(current.applied),
+        liked: Boolean(current.liked),
+        openingReminder: desiredReminder,
+        openingReminderSentAt: desiredReminder ? current.openingReminderSentAt || null : null,
+        deadlineReminderStages: Array.isArray(current.deadlineReminderStages) ? current.deadlineReminderStages : [],
+        createdAt: current.createdAt || Timestamp.now(),
+        updatedAt: Timestamp.now(),
+      },
+      { merge: true },
+    );
+  });
+}
+
 async function recordView(opportunityId) {
   const storageKey = `oval.viewed.${opportunityId}`;
   if (sessionStorage.getItem(storageKey)) {
@@ -3961,6 +4434,7 @@ async function initDetails(user, profile) {
   setText("#detailsLocation", opportunity.locationLabel);
   setText("#detailsWorkMode", opportunity.workMode);
   setText("#detailsCompensation", opportunity.payLabel);
+  setText("#detailsOpening", formatDate(opportunity.openingAt) || "Open now");
   setText("#detailsDeadline", formatDate(opportunity.deadlineAt));
   setText("#detailsCaption", opportunity.caption);
   setText("#detailsAboutCompany", opportunity.aboutCompany);
@@ -4062,10 +4536,12 @@ async function initDetails(user, profile) {
   const saveButtons = qsa("[data-details-save]");
   const appliedButton = qs("#markAppliedButton");
   const applyButton = qs("#applyNowButton");
+  const openingReminderButton = qs("#openingReminderButton");
   const manageActions = qs("#detailsManageActions");
   const editLink = qs("#detailsEditLink");
   const deleteButton = qs("#detailsDeleteButton");
   const canDelete = canDeleteOpportunity(opportunity, user, profile);
+  const openingInFuture = isOpportunityOpeningInFuture(opportunity);
 
   if (canDelete) {
     manageActions?.classList.remove("hidden");
@@ -4080,6 +4556,15 @@ async function initDetails(user, profile) {
     saveButtons.forEach((button) => {
       button.innerHTML = `<span class="material-symbols-outlined">${savedState.saved ? "bookmark" : "bookmark_add"}</span>`;
     });
+    if (openingReminderButton) {
+      openingReminderButton.classList.toggle("hidden", !openingInFuture);
+      openingReminderButton.textContent = savedState.openingReminder
+        ? "Opening reminder set"
+        : "Remind me when it opens";
+      openingReminderButton.className = savedState.openingReminder
+        ? "mt-3 w-full h-12 rounded-2xl bg-emerald-500/20 text-emerald-100 border border-emerald-400/30 font-semibold"
+        : "mt-3 w-full h-12 rounded-2xl bg-white/10 text-white border border-white/10 font-semibold";
+    }
     if (appliedButton) {
       appliedButton.textContent = savedState.applied ? "Applied" : "Mark Applied";
       appliedButton.className = savedState.applied
@@ -4134,6 +4619,36 @@ async function initDetails(user, profile) {
       }
     });
   }
+
+  openingReminderButton?.addEventListener("click", async () => {
+    try {
+      if (!openingInFuture) {
+        setStatus(status, "This opportunity is already open.", "info");
+        return;
+      }
+      const current = states.get(opportunity.id) || {};
+      await updateOpeningReminderState(opportunity, !current.openingReminder);
+      const next = {
+        ...current,
+        saved: Boolean(current.saved),
+        applied: Boolean(current.applied),
+        liked: Boolean(current.liked),
+        openingReminder: !current.openingReminder,
+      };
+      states.set(opportunity.id, next);
+      paintButtons(next);
+      setStatus(
+        status,
+        next.openingReminder
+          ? "You will be notified when this opportunity opens."
+          : "Opening reminder removed.",
+        "success",
+      );
+    } catch (error) {
+      console.error(error);
+      setStatus(status, error.message || "Opening reminder update failed.", "error");
+    }
+  });
 
   deleteButton?.addEventListener("click", async () => {
     deleteButton.disabled = true;
@@ -4764,6 +5279,7 @@ async function initProfile(user, profile) {
         }
         try {
           clearAuthSessionMarker(user.uid);
+          await removePushInstallation(user);
           await signOut(auth);
           location.href = "onboarding.html";
         } catch (error) {
@@ -5151,6 +5667,7 @@ async function initCreatePost(user, profile) {
     locationLabel,
     workMode,
     payLabel,
+    openingAt,
     deadlineAt,
     eligibility,
     responsibilities,
@@ -5169,6 +5686,7 @@ async function initCreatePost(user, profile) {
       locationLabel,
       workMode,
       payLabel,
+      openingAt,
       deadlineAt,
       tags: extractHashtags(caption),
       eligibility,
@@ -5196,6 +5714,18 @@ async function initCreatePost(user, profile) {
     return nextDate.toISOString();
   }
 
+  function normalizeOptionalDateValue(rawValue) {
+    const candidate = String(rawValue || "").trim();
+    if (!candidate) {
+      return null;
+    }
+    const nextDate = new Date(candidate);
+    if (Number.isNaN(nextDate.getTime())) {
+      return null;
+    }
+    return nextDate.toISOString();
+  }
+
   function createFormDraftPayload(formData, media, attachments) {
     const title = String(formData.get("title") || "").trim();
     const caption = String(formData.get("caption") || "").trim();
@@ -5206,6 +5736,11 @@ async function initCreatePost(user, profile) {
     if (caption.length > MAX_CAPTION_LENGTH) {
       throw new Error(`Descriptions can be up to ${MAX_CAPTION_LENGTH} characters.`);
     }
+    const openingAt = normalizeOptionalDateValue(formData.get("openingAt"));
+    const deadlineAt = normalizeDeadlineValue(formData.get("deadlineAt"));
+    if (openingAt && new Date(openingAt).getTime() > new Date(deadlineAt).getTime()) {
+      throw new Error("Opening date cannot be after the deadline.");
+    }
     return baseOpportunityDraftPayload({
       title,
       caption,
@@ -5214,7 +5749,8 @@ async function initCreatePost(user, profile) {
       locationLabel: String(formData.get("locationLabel") || "").trim(),
       workMode: String(formData.get("workMode") || "Remote"),
       payLabel: String(formData.get("payLabel") || "").trim(),
-      deadlineAt: normalizeDeadlineValue(formData.get("deadlineAt")),
+      openingAt,
+      deadlineAt,
       eligibility: linesFromInput(formData.get("eligibility")),
       responsibilities: linesFromInput(formData.get("responsibilities")),
       requirements: linesFromInput(formData.get("requirements")),
@@ -5243,6 +5779,11 @@ async function initCreatePost(user, profile) {
     if (attachments.length > ATTACHMENT_MAX_COUNT) {
       throw new Error(`"${title}" has more than ${ATTACHMENT_MAX_COUNT} attachments.`);
     }
+    const openingAt = normalizeOptionalDateValue(rawPost.openingAt || rawPost.openingDate || rawPost.opensAt);
+    const deadlineAt = normalizeDeadlineValue(rawPost.deadline || rawPost.deadlineAt);
+    if (openingAt && new Date(openingAt).getTime() > new Date(deadlineAt).getTime()) {
+      throw new Error(`"${title}" has an opening date after its deadline.`);
+    }
     return baseOpportunityDraftPayload({
       title,
       caption,
@@ -5251,7 +5792,8 @@ async function initCreatePost(user, profile) {
       locationLabel: String(rawPost.location || rawPost.locationLabel || "").trim(),
       workMode: normalizeChoice(rawPost.workStyle || rawPost.workMode, new Set(["Remote", "Hybrid", "On-site", "Remote-friendly", "Global"]), "Remote"),
       payLabel: String(rawPost.compensation || rawPost.payLabel || "").trim(),
-      deadlineAt: normalizeDeadlineValue(rawPost.deadline || rawPost.deadlineAt),
+      openingAt,
+      deadlineAt,
       eligibility: normalizeListInput(rawPost.eligibility),
       responsibilities: normalizeListInput(rawPost.responsibilities),
       requirements: normalizeListInput(rawPost.requirements),
@@ -5361,6 +5903,7 @@ async function initCreatePost(user, profile) {
     qs("#locationLabel").value = editingOpportunity.locationLabel || "";
     qs("#workMode").value = editingOpportunity.workMode || "Remote";
     qs("#payLabel").value = editingOpportunity.payLabel || "";
+    qs("#openingAt").value = toDate(editingOpportunity.openingAt)?.toISOString().slice(0, 10) || "";
     qs("#deadlineAt").value = toDate(editingOpportunity.deadlineAt)?.toISOString().slice(0, 10) || "";
     qs("#eligibility").value = serializeLines(editingOpportunity.eligibility);
     qs("#responsibilities").value = serializeLines(editingOpportunity.responsibilities);
@@ -5648,7 +6191,7 @@ async function initCreatePost(user, profile) {
           "success",
         );
       } else {
-        await addDoc(collection(db, "opportunities"), {
+        const createdRef = await addDoc(collection(db, "opportunities"), {
           ...payload,
           createdAt: Timestamp.now(),
           viewsCount: 0,
@@ -5665,6 +6208,17 @@ async function initCreatePost(user, profile) {
             : "Opportunity published.",
           "success",
         );
+        if (nextStatus === "pending" && profile.role !== "admin") {
+          notifyAdmins({
+            type: "opportunity-pending-review",
+            title: "New post pending approval",
+            body: `${draftPayload.title} is waiting for review.`,
+            opportunityId: createdRef.id,
+            profileUid: user.uid,
+          }).catch((error) => {
+            console.warn("Pending approval notification failed.", error);
+          });
+        }
       }
     } catch (error) {
       console.error(error);
@@ -6353,6 +6907,9 @@ async function initSettings(user, profile) {
   const dashboardLink = qs("#settingsDashboardLink");
   const moderationLink = qs("#settingsModerationLink");
   const signOutButton = qs("#settingsSignOut");
+  const pushButton = qs("#pushNotificationButton");
+  const pushSummary = qs("#pushNotificationSummary");
+  const pushStatus = qs("#pushNotificationStatus");
   const notificationPrefs = getSettingsPreferences();
   const toggleButtons = qsa("[data-pref-key]");
   const soundToggle = qs("[data-app-pref='feedSound']");
@@ -6389,9 +6946,71 @@ async function initSettings(user, profile) {
       : `Usernames can be changed once every 14 days. Next change: ${formatDate(cooldown.availableAt)}.`;
   }
 
+  async function paintPushControls() {
+    if (!pushButton || !pushSummary) {
+      return;
+    }
+    const permission = notificationPermissionStatus();
+    const nativeShell = isNativeAndroidShell();
+    if (permission === "unsupported") {
+      pushSummary.textContent = "Push notifications are not supported on this device.";
+      pushButton.textContent = "Unavailable";
+      pushButton.disabled = true;
+      return;
+    }
+
+    if (permission === "granted") {
+      pushSummary.textContent = nativeShell
+        ? "Android push notifications are enabled on this device."
+        : "Browser push notifications are enabled for this installation.";
+      pushButton.textContent = "Enabled";
+      pushButton.disabled = false;
+      pushButton.className = "px-4 py-2 rounded-xl theme-primary font-semibold shrink-0";
+      return;
+    }
+
+    if (permission === "denied") {
+      pushSummary.textContent = nativeShell
+        ? "Notifications are blocked at system level. Enable them in Android app settings."
+        : "Notifications are blocked in this browser. Enable them in site settings to receive alerts.";
+      pushButton.textContent = "Retry";
+      pushButton.disabled = false;
+      pushButton.className = "px-4 py-2 rounded-xl bg-white text-black font-semibold shrink-0";
+      return;
+    }
+
+    pushSummary.textContent = "Enable alerts on this device for inbox activity and reminders.";
+    pushButton.textContent = "Enable";
+    pushButton.disabled = false;
+    pushButton.className = "px-4 py-2 rounded-xl bg-white text-black font-semibold shrink-0";
+  }
+
   paintUsernameHelpText(profile);
+  paintPushControls().catch(() => {});
   usernameInput?.addEventListener("blur", () => {
     usernameInput.value = normalizeUsernameValue(usernameInput.value);
+  });
+
+  pushButton?.addEventListener("click", async () => {
+    pushButton.disabled = true;
+    setStatus(pushStatus, "");
+    try {
+      const result = await syncPushNotifications(user, { prompt: true });
+      await paintPushControls();
+      if (result.enabled) {
+        setStatus(pushStatus, "Push notifications are enabled on this device.", "success");
+      } else if (result.permission === "denied") {
+        setStatus(pushStatus, "Notifications are blocked. Enable them in your browser or app settings, then try again.", "error");
+      } else {
+        setStatus(pushStatus, "Push notifications are unavailable right now.", "error");
+      }
+    } catch (error) {
+      console.error(error);
+      setStatus(pushStatus, error.message || "Could not enable push notifications.", "error");
+    } finally {
+      pushButton.disabled = false;
+      await paintPushControls().catch(() => {});
+    }
   });
 
   toggleButtons.forEach((button) => {
@@ -6491,6 +7110,7 @@ async function initSettings(user, profile) {
     }
     try {
       clearAuthSessionMarker(user.uid);
+      await removePushInstallation(user);
       await signOut(auth);
       location.href = "onboarding.html";
     } catch (error) {
@@ -6585,6 +7205,7 @@ async function main() {
   const user = await withTimeout(authReady, 1500).catch(() => null);
   installTouchHaptics();
   installNativeGoogleBridge();
+  installNativePushBridge();
   const cachedProfile = user ? readCachedProfile(user.uid) : null;
   let profile = user ? fallbackProfileFromUser(user, cachedProfile) : null;
   let profileRefreshPromise = Promise.resolve(profile);
@@ -6611,6 +7232,12 @@ async function main() {
         writeCachedProfile(user.uid, profile);
         return profile;
       });
+    profileRefreshPromise.then((stableProfile) => {
+      syncPushNotifications(user).catch((error) => {
+        console.warn("Push registration sync failed.", error);
+      });
+      return stableProfile;
+    });
     if (!NON_BLOCKING_PROFILE_PAGES.has(page)) {
       profile = await profileRefreshPromise;
     }

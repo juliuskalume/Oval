@@ -34,6 +34,13 @@ import {
   ref,
   uploadBytes,
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-storage.js";
+import {
+  deleteToken,
+  getMessaging,
+  getToken,
+  isSupported as isMessagingSupported,
+  onMessage,
+} from "https://www.gstatic.com/firebasejs/10.12.2/firebase-messaging.js";
 
 const firebaseConfig = {
   apiKey: "AIzaSyCm_PqivPXxuUikwa2_8sE-KYh1VDNXfKI",
@@ -50,6 +57,9 @@ const auth = getAuth(app);
 const db = getFirestore(app);
 const storage = getStorage(app);
 const googleProvider = new GoogleAuthProvider();
+const messagingReady = isMessagingSupported()
+  .then((supported) => (supported ? getMessaging(app) : null))
+  .catch(() => null);
 
 isSupported()
   .then((supported) => {
@@ -73,8 +83,13 @@ export {
   getDoc,
   getDocs,
   getDownloadURL,
+  getMessaging,
+  getToken,
   googleProvider,
+  isMessagingSupported,
+  messagingReady,
   onAuthStateChanged,
+  onMessage,
   orderBy,
   query,
   ref,
@@ -86,6 +101,7 @@ export {
   signInWithPopup,
   signOut,
   storage,
+  deleteToken,
   updateDoc,
   updateProfile,
   uploadBytes,

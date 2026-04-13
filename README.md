@@ -1,6 +1,6 @@
 # Oval
 
-Oval is a mobile-first opportunity discovery app backed by Firebase, with Vercel serverless functions for Groq-assisted automatic post review and automatic archival of expired posts.
+Oval is a mobile-first opportunity discovery app backed by Firebase, with Vercel serverless functions for Groq-assisted automatic post review, push notification fanout, reminder processing, and automatic archival of expired posts.
 
 ## Included flows
 
@@ -24,7 +24,7 @@ This static local server is enough for frontend work, but the AI moderation rout
 
 ## Deploy on Vercel
 
-This project serves static app files from the repo root and uses Vercel serverless functions for Groq-assisted post moderation and automatic archival of expired published posts.
+This project serves static app files from the repo root and uses Vercel serverless functions for Groq-assisted post moderation, push notifications, reminder processing, and automatic archival of expired published posts.
 
 ### Option 1: Deploy from GitHub
 
@@ -54,11 +54,15 @@ The auto-approval flow runs in [api/review-opportunity.js](api/review-opportunit
 - `OVAL_FIREBASE_PROJECT_ID`
 - `OVAL_FIREBASE_CLIENT_EMAIL`
 - `OVAL_FIREBASE_PRIVATE_KEY`
-- `CRON_SECRET` for the daily archival cron on [api/archive-expired-opportunities.js](api/archive-expired-opportunities.js)
+- `OVAL_FIREBASE_VAPID_KEY` for web push in the PWA
+- `OVAL_APP_BASE_URL` (recommended, for push notification links)
+- `CRON_SECRET` for scheduled jobs on [api/archive-expired-opportunities.js](api/archive-expired-opportunities.js) and [api/process-reminders.js](api/process-reminders.js)
 
 If the moderation endpoint is unavailable, Oval falls back to manual admin review for new submissions. Live post edits by non-admins intentionally do not bypass that server review path.
 
 Expired published posts are hidden immediately by the client once their deadline passes, and Vercel also runs a daily production cron to flip their Firestore status to `archived` automatically.
+
+Push notifications are sent for inbox activity and reminders when device/browser tokens are registered. The PWA uses Firebase Cloud Messaging plus a VAPID key, and the Android wrapper uses native Firebase Messaging.
 
 ## Firebase setup
 
@@ -76,6 +80,13 @@ Current upload limits:
 - Cover video: 10 MB
 - Attachments: 5 MB each
 - Attachments per post: 5
+
+Current reminder behavior:
+
+- Admins get notified when a new post is pending approval
+- Users get push notifications for inbox items when supported
+- Users can set opening-date reminders for future opportunities
+- Saved opportunities generate reminder notifications at 1 week, 3 days, 1 day, and 1 hour before deadline
 
 ### Required for deployed auth
 

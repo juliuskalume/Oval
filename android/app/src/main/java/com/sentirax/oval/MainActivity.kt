@@ -1,11 +1,14 @@
 package com.sentirax.oval
 
+import android.Manifest
 import android.annotation.SuppressLint
 import android.app.Activity
 import android.content.ActivityNotFoundException
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import android.os.Message
 import android.view.HapticFeedbackConstants
@@ -27,6 +30,8 @@ import androidx.activity.OnBackPressedCallback
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.browser.customtabs.CustomTabsIntent
+import androidx.core.app.NotificationManagerCompat
+import androidx.core.content.ContextCompat
 import androidx.core.view.isVisible
 import androidx.swiperefreshlayout.widget.SwipeRefreshLayout
 import com.google.android.gms.auth.api.signin.GoogleSignIn
@@ -36,6 +41,7 @@ import com.google.android.gms.auth.api.signin.GoogleSignInOptions
 import com.google.android.gms.auth.api.signin.GoogleSignInStatusCodes
 import com.google.android.gms.common.api.ApiException
 import com.google.android.gms.common.api.CommonStatusCodes
+import com.google.firebase.messaging.FirebaseMessaging
 import com.google.android.material.button.MaterialButton
 import com.google.android.material.snackbar.Snackbar
 import org.json.JSONObject
@@ -45,6 +51,8 @@ class MainActivity : AppCompatActivity() {
   companion object {
     private const val startUrl = "https://oval-nine.vercel.app/"
     private const val stateMainWebView = "state.mainWebView"
+    @JvmStatic
+    var appVisible: Boolean = false
     private val internalHosts = setOf("oval-nine.vercel.app")
     private val popupTrustedHostSuffixes = listOf(
       "google.com",
@@ -99,6 +107,17 @@ class MainActivity : AppCompatActivity() {
       deliverNativeGoogleError(describeGoogleSignInError(error))
     } catch (error: Exception) {
       deliverNativeGoogleError(error.message ?: "Google sign-in failed.")
+    }
+  }
+
+  private val notificationPermissionLauncher = registerForActivityResult(
+    ActivityResultContracts.RequestPermission(),
+  ) { granted ->
+    deliverNativePushPermission(if (granted) "granted" else "denied")
+    if (granted) {
+      deliverStoredPushToken()
+    } else {
+      deliverNativePushError(getString(R.string.notifications_permission_denied))
     }
   }
 
@@ -184,6 +203,16 @@ class MainActivity : AppCompatActivity() {
     closePopupWebView()
     destroyWebView(mainWebView)
     super.onDestroy()
+  }
+
+  override fun onResume() {
+    super.onResume()
+    appVisible = true
+  }
+
+  override fun onPause() {
+    appVisible = false
+    super.onPause()
   }
 
   private fun currentWebView(): WebView? = popupWebView ?: mainWebView
@@ -354,6 +383,74 @@ class MainActivity : AppCompatActivity() {
     )
   }
 
+  private fun notificationsPermissionState(): String {
+    return when {
+      !NotificationManagerCompat.from(this).areNotificationsEnabled() -> "denied"
+      Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU -> "granted"
+      ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED -> "granted"
+      else -> "default"
+    }
+  }
+
+  private fun deliverNativePushPermission(status: String = notificationsPermissionState()) {
+    evaluateOnMainWebView(
+      "window.ovalNativePushPermissionResult && window.ovalNativePushPermissionResult(${quoteJs(status)});",
+    )
+  }
+
+  private fun deliverNativePushError(message: String) {
+    evaluateOnMainWebView(
+      "window.ovalNativePushError && window.ovalNativePushError(${quoteJs(message)});",
+    )
+  }
+
+  private fun fetchAndDeliverPushToken() {
+    FirebaseMessaging.getInstance().token
+      .addOnSuccessListener { token ->
+        if (token.isNullOrBlank()) {
+          deliverNativePushError("Push token is not available yet.")
+          return@addOnSuccessListener
+        }
+        evaluateOnMainWebView(
+          "window.ovalNativePushToken && window.ovalNativePushToken(${quoteJs(token)});",
+        )
+      }
+      .addOnFailureListener { error ->
+        deliverNativePushError(error.message ?: "Could not fetch the push token.")
+      }
+  }
+
+  private fun deliverStoredPushToken() {
+    val permission = notificationsPermissionState()
+    deliverNativePushPermission(permission)
+    if (permission != "granted") {
+      return
+    }
+
+    val stored = OvalMessagingService.storedPushToken(this)
+    if (stored.isNotBlank()) {
+      evaluateOnMainWebView(
+        "window.ovalNativePushToken && window.ovalNativePushToken(${quoteJs(stored)});",
+      )
+      return
+    }
+    fetchAndDeliverPushToken()
+  }
+
+  private fun requestNativeNotificationPermission() {
+    val currentState = notificationsPermissionState()
+    if (currentState == "granted") {
+      deliverStoredPushToken()
+      return
+    }
+    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
+      deliverStoredPushToken()
+      return
+    }
+
+    notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+  }
+
   private fun reloadMainPageFromBridge() {
     if (popupWebView != null) {
       closePopupWebView()
@@ -408,6 +505,20 @@ class MainActivity : AppCompatActivity() {
     fun performHaptic(style: String?) {
       runOnUiThread {
         performNativeHaptic(style)
+      }
+    }
+
+    @JavascriptInterface
+    fun requestPushPermission() {
+      runOnUiThread {
+        requestNativeNotificationPermission()
+      }
+    }
+
+    @JavascriptInterface
+    fun syncPushToken() {
+      runOnUiThread {
+        deliverStoredPushToken()
       }
     }
   }

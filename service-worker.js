@@ -1,7 +1,25 @@
-const CACHE_VERSION = "v27";
+importScripts(
+  "https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js",
+  "https://www.gstatic.com/firebasejs/10.12.2/firebase-messaging-compat.js",
+);
+
+const CACHE_VERSION = "v28";
 const STATIC_CACHE = `oval-static-${CACHE_VERSION}`;
 const RUNTIME_CACHE = `oval-runtime-${CACHE_VERSION}`;
 const OFFLINE_URL = "./offline.html";
+const APP_ORIGIN = self.location.origin;
+
+firebase.initializeApp({
+  apiKey: "AIzaSyCm_PqivPXxuUikwa2_8sE-KYh1VDNXfKI",
+  authDomain: "oval-by-sentirax.firebaseapp.com",
+  projectId: "oval-by-sentirax",
+  storageBucket: "oval-by-sentirax.firebasestorage.app",
+  messagingSenderId: "1081321199371",
+  appId: "1:1081321199371:web:aae3b2e47a0c9409cdf40e",
+  measurementId: "G-CVK43J74BT",
+});
+
+const messaging = firebase.messaging();
 
 const APP_SHELL_FILES = [
   "./",
@@ -46,7 +64,41 @@ const EXTERNAL_STATIC_FILES = [
   "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js",
   "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js",
   "https://www.gstatic.com/firebasejs/10.12.2/firebase-storage.js"
+  ,
+  "https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js",
+  "https://www.gstatic.com/firebasejs/10.12.2/firebase-messaging-compat.js"
 ];
+
+function normalizeTargetUrl(value) {
+  const fallback = `${APP_ORIGIN}/inbox.html`;
+  const raw = String(value || "").trim();
+  if (!raw) {
+    return fallback;
+  }
+  try {
+    return new URL(raw, `${APP_ORIGIN}/`).toString();
+  } catch (error) {
+    return fallback;
+  }
+}
+
+function notificationOptionsFromPayload(payload = {}) {
+  const data = payload.data || {};
+  const title = data.title || payload.notification?.title || "Oval";
+  const body = data.body || payload.notification?.body || "You have a new Oval update.";
+  return {
+    title,
+    options: {
+      body,
+      icon: "./assets/pwa/icon-any-192.png",
+      badge: "./assets/pwa/icon-any-192.png",
+      tag: data.notificationId || `oval-${Date.now()}`,
+      data: {
+        targetUrl: normalizeTargetUrl(data.targetUrl),
+      },
+    },
+  };
+}
 
 async function cacheSameOriginAsset(cache, url) {
   const response = await fetch(url, { cache: "no-cache" });
@@ -118,6 +170,11 @@ async function staleWhileRevalidate(request, options = {}) {
   return cached || networkPromise || Response.error();
 }
 
+messaging.onBackgroundMessage((payload) => {
+  const { title, options } = notificationOptionsFromPayload(payload);
+  self.registration.showNotification(title, options);
+});
+
 self.addEventListener("install", (event) => {
   event.waitUntil((async () => {
     const cache = await caches.open(STATIC_CACHE);
@@ -168,4 +225,25 @@ self.addEventListener("fetch", (event) => {
   if (isCacheableExternalMediaAsset(url)) {
     event.respondWith(staleWhileRevalidate(request, { ignoreSearch: false }));
   }
+});
+
+self.addEventListener("notificationclick", (event) => {
+  event.notification.close();
+  const targetUrl = normalizeTargetUrl(event.notification.data?.targetUrl);
+  event.waitUntil((async () => {
+    const clientsList = await self.clients.matchAll({
+      type: "window",
+      includeUncontrolled: true,
+    });
+    for (const client of clientsList) {
+      if ("focus" in client) {
+        await client.navigate(targetUrl);
+        await client.focus();
+        return;
+      }
+    }
+    if (self.clients.openWindow) {
+      await self.clients.openWindow(targetUrl);
+    }
+  })());
 });

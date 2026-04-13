@@ -221,6 +221,37 @@ service cloud.firestore {
         );
     }
 
+    function validPushTokenPayload(installationId) {
+      return request.resource.data.keys().hasOnly([
+          'installationId',
+          'token',
+          'platform',
+          'permission',
+          'userAgent',
+          'nativeBridge',
+          'createdAt',
+          'updatedAt'
+        ])
+        && request.resource.data.installationId == installationId
+        && request.resource.data.installationId is string
+        && request.resource.data.installationId.size() > 0
+        && request.resource.data.installationId.size() <= 120
+        && request.resource.data.token is string
+        && request.resource.data.token.size() > 0
+        && request.resource.data.token.size() <= 4096
+        && request.resource.data.platform is string
+        && request.resource.data.platform.size() > 0
+        && request.resource.data.platform.size() <= 40
+        && request.resource.data.permission is string
+        && request.resource.data.permission.size() > 0
+        && request.resource.data.permission.size() <= 20
+        && request.resource.data.userAgent is string
+        && request.resource.data.userAgent.size() <= 600
+        && request.resource.data.nativeBridge is bool
+        && request.resource.data.createdAt is timestamp
+        && request.resource.data.updatedAt is timestamp;
+    }
+
     function validUsernameReservation() {
       return request.resource.data.keys().hasOnly([
           'uid',
@@ -330,6 +361,14 @@ service cloud.firestore {
         allow create: if signedIn() && validNotificationPayload();
         allow update: if signedIn() && (request.auth.uid == uid || isAdmin());
         allow delete: if isAdmin();
+      }
+
+      match /pushTokens/{installationId} {
+        allow read: if isAdmin() || (signedIn() && request.auth.uid == uid);
+        allow create, update: if signedIn()
+          && request.auth.uid == uid
+          && validPushTokenPayload(installationId);
+        allow delete: if isAdmin() || (signedIn() && request.auth.uid == uid);
       }
 
       match /following/{targetUid} {

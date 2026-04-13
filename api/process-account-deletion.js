@@ -1,6 +1,7 @@
 import { cert, getApps, initializeApp } from "firebase-admin/app";
 import { getAuth } from "firebase-admin/auth";
 import { getFirestore } from "firebase-admin/firestore";
+import { createNotificationAndPush } from "./_lib/push.js";
 
 const BOOTSTRAP_ADMIN_EMAILS = new Set([
   "juliuskalume906@gmail.com",
@@ -171,13 +172,11 @@ async function cancelDeletionRequest(db, targetUid) {
     throw new HttpError(404, "Deletion request not found.");
   }
   await requestRef.delete();
-  await db.collection("users").doc(targetUid).collection("notifications").add({
+  await createNotificationAndPush(targetUid, {
     type: "account-deletion-canceled",
     title: "Deletion request canceled",
     body: "An admin canceled your account deletion request. Your account will stay active.",
-    read: false,
-    createdAt: new Date(),
-  });
+  }, { db, createdAt: new Date() });
 }
 
 async function approveDeletionRequest(auth, db, targetUid) {
