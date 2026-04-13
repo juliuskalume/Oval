@@ -9,11 +9,17 @@ const BOOTSTRAP_ADMIN_EMAILS = new Set([
 
 const DEFAULT_AVATAR =
   "https://images.unsplash.com/photo-1494790108377-be9c29b29330?auto=format&fit=crop&w=300&q=80";
+const DEFAULT_COVER =
+  "https://images.unsplash.com/photo-1521737604893-d14cc237f11d?auto=format&fit=crop&w=1200&q=80";
 
 const ALLOWED_CATEGORIES = new Set(["Job", "Internship", "Gig", "Scholarship"]);
 const ALLOWED_WORK_MODES = new Set(["Remote", "Hybrid", "On-site", "Remote-friendly", "Global"]);
 const GROQ_API_BASE = "https://api.groq.com/openai/v1";
 const DEFAULT_GROQ_MODEL = process.env.OVAL_GROQ_MODEL || process.env.GROQ_MODEL || "llama-3.3-70b-versatile";
+const DEFAULT_GROQ_VISION_MODEL = process.env.OVAL_GROQ_VISION_MODEL || "meta-llama/llama-4-scout-17b-16e-instruct";
+const MAX_ATTACHMENT_COUNT = 5;
+const MAX_VISUAL_INPUTS_PER_REQUEST = 5;
+const MAX_BASE64_IMAGE_URL_LENGTH = 4_500_000;
 
 class HttpError extends Error {
   constructor(status, message, options = {}) {
@@ -138,6 +144,18 @@ function sanitizeHashtags(value) {
   )].slice(0, 10);
 }
 
+function isImageKind(kind) {
+  return String(kind || "").toLowerCase().startsWith("image/");
+}
+
+function isVideoKind(kind) {
+  return String(kind || "").toLowerCase().startsWith("video/");
+}
+
+function isDefaultCoverUrl(url) {
+  return sanitizeOptionalUrl(url) === DEFAULT_COVER;
+}
+
 function sanitizeMedia(value, title) {
   const media = value && typeof value === "object" ? value : {};
   return compact({
@@ -164,7 +182,34 @@ function sanitizeAttachments(value) {
       };
     })
     .filter(Boolean)
-    .slice(0, 10);
+    .slice(0, MAX_ATTACHMENT_COUNT);
+}
+
+function sanitizeVisualModerationFrames(value) {
+  const source = Array.isArray(value) ? value : [];
+  return source
+    .map((item, index) => {
+      const frame = item && typeof item === "object" ? item : {};
+      const imageUrl = String(frame.imageUrl || "").trim();
+      if (!/^data:image\/[a-z0-9.+-]+;base64,[a-z0-9+/=\s]+$/i.test(imageUrl)) {
+        return null;
+      }
+      if (imageUrl.length > MAX_BASE64_IMAGE_URL_LENGTH) {
+        return null;
+      }
+      const sourceType = frame.sourceType === "attachment" ? "attachment" : "cover";
+      const attachmentIndex = sourceType === "attachment" && Number.isInteger(frame.attachmentIndex)
+        ? frame.attachmentIndex
+        : undefined;
+      return compact({
+        sourceType,
+        attachmentIndex,
+        label: sanitizeString(frame.label || `Frame ${index + 1}`, 160),
+        imageUrl,
+      });
+    })
+    .filter(Boolean)
+    .slice(0, MAX_ATTACHMENT_COUNT + 1);
 }
 
 function sanitizeHandle(value, fallback) {
@@ -339,6 +384,270 @@ function collectMetadataFlags(payload) {
     flags.push("Company or creator background is missing.");
   }
   return flags;
+}
+
+function collectVisualReviewInputs(payload, clientFrames = []) {
+  const visualInputs = [];
+  const uncoveredVideos = [];
+  const coverFrame = clientFrames.find((item) => item.sourceType === "cover");
+
+  if (payload.media?.url && !isDefaultCoverUrl(payload.media.url)) {
+    if (isImageKind(payload.media.kind)) {
+      visualInputs.push({
+        label: "Cover image",
+        imageUrl: payload.media.url,
+        sourceType: "cover",
+      });
+    } else if (isVideoKind(payload.media.kind)) {
+      if (coverFrame?.imageUrl) {
+        visualInputs.push({
+          label: coverFrame.label || "Cover video frame",
+          imageUrl: coverFrame.imageUrl,
+          sourceType: "cover",
+        });
+      } else {
+        uncoveredVideos.push("Cover video could not be safety-screened automatically.");
+      }
+    }
+  }
+
+  payload.attachments.forEach((attachment, index) => {
+    if (!attachment?.url) {
+      return;
+    }
+    if (isImageKind(attachment.kind)) {
+      visualInputs.push({
+        label: attachment.name || `Attachment ${index + 1}`,
+        imageUrl: attachment.url,
+        sourceType: "attachment",
+        attachmentIndex: index,
+      });
+      return;
+    }
+    if (isVideoKind(attachment.kind)) {
+      const frame = clientFrames.find((item) => item.sourceType === "attachment" && item.attachmentIndex === index);
+      if (frame?.imageUrl) {
+        visualInputs.push({
+          label: frame.label || attachment.name || `Attachment ${index + 1}`,
+          imageUrl: frame.imageUrl,
+          sourceType: "attachment",
+          attachmentIndex: index,
+        });
+      } else {
+        uncoveredVideos.push(`${attachment.name || `Attachment ${index + 1}`} is a video and needs manual media review.`);
+      }
+    }
+  });
+
+  return {
+    visualInputs,
+    uncoveredVideos,
+  };
+}
+
+async function reviewVisualSafetyBatch(apiKey, visualInputs) {
+  const labeledList = visualInputs
+    .map((item, index) => `${index + 1}. ${item.label}`)
+    .join("\n");
+  const content = [
+    {
+      type: "text",
+      text: [
+        "You are reviewing opportunity-post media for sexual or nude content.",
+        "Classify whether any supplied image contains nudity, exposed genitals, visible nipples, pornographic material, explicit sexual activity, fetish-focused explicit content, or strongly sexualized adult imagery.",
+        "If you are unsure, choose manual_review.",
+        "Normal fully clothed people, faces, offices, products, landscapes, and non-sexual scenes are safe.",
+        `Images in order:\n${labeledList}`,
+        'Return JSON only with: {"decision":"safe|manual_review","confidence":"high|medium|low","summary":"short sentence","flaggedItems":[{"label":"string","reason":"string"}],"notes":["string"]}',
+      ].join("\n\n"),
+    },
+    ...visualInputs.map((item) => ({
+      type: "image_url",
+      image_url: {
+        url: item.imageUrl,
+      },
+    })),
+  ];
+
+  const response = await fetch(`${GROQ_API_BASE}/chat/completions`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      model: DEFAULT_GROQ_VISION_MODEL,
+      temperature: 0.1,
+      response_format: { type: "json_object" },
+      messages: [
+        {
+          role: "system",
+          content:
+            "You are a strict visual safety reviewer. If any image may contain nudity or sexual content, route it to manual_review. Respond with valid JSON only.",
+        },
+        {
+          role: "user",
+          content,
+        },
+      ],
+    }),
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(errorText || `Groq returned HTTP ${response.status}`);
+  }
+
+  const data = await response.json();
+  const rawContent = data?.choices?.[0]?.message?.content;
+  const parsed = typeof rawContent === "string" ? JSON.parse(rawContent) : {};
+  return {
+    model: sanitizeString(data?.model || DEFAULT_GROQ_VISION_MODEL, 120),
+    decision: parsed?.decision === "safe" ? "safe" : "manual_review",
+    confidence: ["high", "medium", "low"].includes(parsed?.confidence) ? parsed.confidence : "low",
+    summary: sanitizeString(parsed?.summary || "", 240),
+    flaggedItems: (Array.isArray(parsed?.flaggedItems) ? parsed.flaggedItems : [])
+      .map((item) => ({
+        label: sanitizeString(item?.label, 160),
+        reason: sanitizeString(item?.reason, 200),
+      }))
+      .filter((item) => item.label || item.reason),
+    notes: sanitizeList(parsed?.notes, { maxItems: 6, maxLength: 180 }),
+  };
+}
+
+async function reviewVisualSafety(payload, clientFrames = []) {
+  const { visualInputs, uncoveredVideos } = collectVisualReviewInputs(payload, clientFrames);
+  const apiKey = process.env.GROQ_API_KEY;
+
+  if (!visualInputs.length && !uncoveredVideos.length) {
+    return {
+      checked: false,
+      safeToPublish: true,
+      confidence: "high",
+      summary: "",
+      reasons: [],
+      flags: [],
+      flaggedItems: [],
+      manualReviewRequired: false,
+      model: "",
+    };
+  }
+
+  if (!apiKey) {
+    return {
+      checked: Boolean(visualInputs.length),
+      safeToPublish: false,
+      confidence: "low",
+      summary: "Visual safety review is not configured, so this submission was routed to admin review.",
+      reasons: ["Groq API key is missing."],
+      flags: uncoveredVideos,
+      flaggedItems: [],
+      manualReviewRequired: true,
+      model: "",
+    };
+  }
+
+  const batches = [];
+  for (let index = 0; index < visualInputs.length; index += MAX_VISUAL_INPUTS_PER_REQUEST) {
+    batches.push(visualInputs.slice(index, index + MAX_VISUAL_INPUTS_PER_REQUEST));
+  }
+
+  try {
+    const results = [];
+    for (const batch of batches) {
+      results.push(await reviewVisualSafetyBatch(apiKey, batch));
+    }
+
+    const flaggedItems = results.flatMap((item) => item.flaggedItems || []);
+    const notes = results.flatMap((item) => item.notes || []);
+    const anyUnsafe = results.some((item) => item.decision !== "safe");
+    const safeToPublish = !anyUnsafe && uncoveredVideos.length === 0;
+    const confidence = results.some((item) => item.confidence === "low")
+      ? "low"
+      : results.some((item) => item.confidence === "medium")
+        ? "medium"
+        : "high";
+    const summary = safeToPublish
+      ? "Uploaded media passed automatic visual safety review."
+      : flaggedItems.length
+        ? "Uploaded media triggered visual safety review and needs manual approval."
+        : uncoveredVideos.length
+          ? "Some uploaded video content could not be safety-screened automatically."
+          : "Uploaded media needs manual visual review.";
+
+    return {
+      checked: true,
+      safeToPublish,
+      confidence,
+      summary: sanitizeString(summary, 240),
+      reasons: sanitizeList(notes, { maxItems: 8, maxLength: 180 }),
+      flags: sanitizeList([
+        ...uncoveredVideos,
+        ...flaggedItems.map((item) => `${item.label}: ${item.reason}`),
+      ], { maxItems: 10, maxLength: 180 }),
+      flaggedItems,
+      manualReviewRequired: !safeToPublish,
+      model: results.map((item) => item.model).filter(Boolean).join(", "),
+    };
+  } catch (error) {
+    return {
+      checked: Boolean(visualInputs.length),
+      safeToPublish: false,
+      confidence: "low",
+      summary: "Visual safety review was unavailable, so this submission was routed to admin review.",
+      reasons: [sanitizeString(error?.message || "Visual safety review failed.", 180)],
+      flags: uncoveredVideos,
+      flaggedItems: [],
+      manualReviewRequired: true,
+      model: DEFAULT_GROQ_VISION_MODEL,
+    };
+  }
+}
+
+function applyVisualSafetyGate(outcome, visualReview) {
+  if (!visualReview || (!visualReview.checked && !visualReview.manualReviewRequired)) {
+    return outcome;
+  }
+
+  const mergedReview = compact({
+    ...outcome.review,
+    mediaChecked: visualReview.checked,
+    mediaSafe: visualReview.safeToPublish,
+    mediaModel: visualReview.model || undefined,
+    mediaSummary: visualReview.summary || undefined,
+    mediaFlags: sanitizeList(visualReview.flags, { maxItems: 10, maxLength: 180 }),
+    mediaReasons: sanitizeList(visualReview.reasons, { maxItems: 8, maxLength: 180 }),
+    mediaFlaggedItems: Array.isArray(visualReview.flaggedItems) ? visualReview.flaggedItems : [],
+  });
+
+  if (visualReview.safeToPublish && !visualReview.manualReviewRequired) {
+    return {
+      ...outcome,
+      review: mergedReview,
+    };
+  }
+
+  return {
+    status: "pending",
+    review: compact({
+      ...mergedReview,
+      decision: "manual_review",
+      summary: sanitizeString(visualReview.summary || outcome.review?.summary || "Uploaded media needs manual review.", 240),
+      confidence: visualReview.confidence || outcome.review?.confidence || "low",
+      reasons: sanitizeList([
+        ...(Array.isArray(mergedReview.reasons) ? mergedReview.reasons : []),
+        "Manual review was chosen because uploaded media could not be cleared automatically.",
+      ], { maxItems: 10, maxLength: 180 }),
+      flags: sanitizeList([
+        ...(Array.isArray(mergedReview.flags) ? mergedReview.flags : []),
+        ...(Array.isArray(visualReview.flags) ? visualReview.flags : []),
+      ], { maxItems: 12, maxLength: 180 }),
+    }),
+    message: visualReview.flaggedItems?.length
+      ? "Opportunity submitted for admin review because uploaded media triggered visual safety checks."
+      : "Opportunity submitted for admin review because uploaded media needs manual verification.",
+  };
 }
 
 async function reviewWithGroq(payload, inspection, metadataFlags) {
@@ -533,6 +842,10 @@ function sanitizeOpportunityPayload(rawPayload, user, profile, existingOpportuni
   const category = ALLOWED_CATEGORIES.has(raw.category) ? raw.category : "Internship";
   const workMode = ALLOWED_WORK_MODES.has(raw.workMode) ? raw.workMode : "Remote";
   const fallbackHandle = `@${sanitizeString(profile?.username || normalizeEmail(user.email).split("@")[0] || "oval", 32).replace(/^@+/, "")}`;
+  const attachmentCount = Array.isArray(raw.attachments) ? raw.attachments.length : 0;
+  if (attachmentCount > MAX_ATTACHMENT_COUNT) {
+    throw new HttpError(400, `You can attach up to ${MAX_ATTACHMENT_COUNT} files per post.`);
+  }
 
   return {
     title,
@@ -616,11 +929,13 @@ export default async function handler(request, response) {
     }
 
     const payload = sanitizeOpportunityPayload(body.payload, user, profile, existingOpportunity);
+    const visualModerationFrames = sanitizeVisualModerationFrames(body.visualModerationFrames);
     const now = Timestamp.now();
+    const visualReview = await reviewVisualSafety(payload, visualModerationFrames);
     let outcome;
 
     if (isAdmin) {
-      outcome = {
+      outcome = applyVisualSafetyGate({
         status: "published",
         review: {
           source: "admin",
@@ -635,12 +950,15 @@ export default async function handler(request, response) {
         message: existingOpportunity
           ? "Opportunity updated and remains live."
           : "Opportunity published.",
-      };
+      }, visualReview);
     } else {
       const inspection = await inspectApplyUrl(payload.applyUrl);
       const metadataFlags = collectMetadataFlags(payload);
       const aiReview = await reviewWithGroq(payload, inspection, metadataFlags);
-      outcome = decideReviewOutcome(payload, inspection, aiReview, metadataFlags);
+      outcome = applyVisualSafetyGate(
+        decideReviewOutcome(payload, inspection, aiReview, metadataFlags),
+        visualReview,
+      );
     }
 
     if (!opportunityRef) {

@@ -50,6 +50,7 @@ The auto-approval flow runs in [api/review-opportunity.js](api/review-opportunit
 
 - `GROQ_API_KEY`
 - `OVAL_GROQ_MODEL` (optional, defaults in code)
+- `OVAL_GROQ_VISION_MODEL` (optional, defaults in code for image-based media review)
 - `OVAL_FIREBASE_PROJECT_ID`
 - `OVAL_FIREBASE_CLIENT_EMAIL`
 - `OVAL_FIREBASE_PRIVATE_KEY`
@@ -65,6 +66,13 @@ Use the configuration already wired in [scripts/firebase.js](scripts/firebase.js
 - Firebase Storage
 
 Apply the rules from [firestore.rules](firestore.rules) and [storage.rules](storage.rules).
+
+Current upload limits:
+
+- Cover image: 5 MB
+- Cover video: 10 MB
+- Attachments: 5 MB each
+- Attachments per post: 5
 
 ### Required for deployed auth
 

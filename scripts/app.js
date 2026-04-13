@@ -52,6 +52,13 @@ const FEED_VIEWPORT_TRANSITION = "transform 520ms cubic-bezier(0.22, 1, 0.36, 1)
 const SETTINGS_PREFS_KEY = "oval.settings.preferences";
 const PROFILE_CACHE_PREFIX = "oval.profile.";
 const APP_LOADER_MIN_MS = 220;
+const MB = 1024 * 1024;
+const COVER_IMAGE_MAX_BYTES = 5 * MB;
+const COVER_VIDEO_MAX_BYTES = 10 * MB;
+const ATTACHMENT_MAX_BYTES = 5 * MB;
+const ATTACHMENT_MAX_COUNT = 5;
+const VIDEO_MODERATION_FRAME_MAX_DIMENSION = 960;
+const VIDEO_MODERATION_FRAME_QUALITY = 0.72;
 const TAP_HAPTIC_SELECTOR = [
   'a[href]',
   'button',
@@ -675,6 +682,167 @@ function safeUrl(value) {
   }
 }
 
+function formatByteSize(bytes) {
+  const value = Number(bytes || 0);
+  if (value <= 0) {
+    return "0 B";
+  }
+  if (value >= MB) {
+    return `${(value / MB).toFixed(value >= 10 * MB ? 0 : 1)} MB`;
+  }
+  return `${Math.round(value / 1024)} KB`;
+}
+
+function isImageKind(kind) {
+  return String(kind || "").toLowerCase().startsWith("image/");
+}
+
+function coverUploadLimit(file) {
+  if (isVideoKind(file?.type)) {
+    return COVER_VIDEO_MAX_BYTES;
+  }
+  if (isImageKind(file?.type)) {
+    return COVER_IMAGE_MAX_BYTES;
+  }
+  return 0;
+}
+
+function validateCoverUploadFile(file) {
+  if (!file) {
+    return;
+  }
+  const limit = coverUploadLimit(file);
+  if (!limit) {
+    throw new Error("Cover media must be an image or a video.");
+  }
+  if (file.size > limit) {
+    throw new Error(
+      `${isVideoKind(file.type) ? "Cover videos" : "Cover images"} can be up to ${formatByteSize(limit)}.`,
+    );
+  }
+}
+
+function validateAttachmentUploadFiles(files, existingCount = 0) {
+  const source = Array.isArray(files) ? files : Array.from(files || []);
+  if (existingCount + source.length > ATTACHMENT_MAX_COUNT) {
+    throw new Error(`You can attach up to ${ATTACHMENT_MAX_COUNT} files per post.`);
+  }
+  source.forEach((file) => {
+    if (Number(file?.size || 0) > ATTACHMENT_MAX_BYTES) {
+      throw new Error(`Each attachment can be up to ${formatByteSize(ATTACHMENT_MAX_BYTES)}.`);
+    }
+  });
+}
+
+async function videoFileToModerationFrame(file, options = {}) {
+  const captureRatio = Number.isFinite(options.captureRatio) ? options.captureRatio : 0.35;
+  const objectUrl = URL.createObjectURL(file);
+  return new Promise((resolve, reject) => {
+    const video = document.createElement("video");
+    let settled = false;
+
+    function cleanup() {
+      URL.revokeObjectURL(objectUrl);
+      video.removeAttribute("src");
+      video.load();
+    }
+
+    function finish(result, error = null) {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      cleanup();
+      if (error) {
+        reject(error);
+        return;
+      }
+      resolve(result);
+    }
+
+    function capture() {
+      try {
+        const width = video.videoWidth || 0;
+        const height = video.videoHeight || 0;
+        if (!width || !height) {
+          throw new Error("Video preview frame is unavailable.");
+        }
+        const maxDimension = VIDEO_MODERATION_FRAME_MAX_DIMENSION;
+        const scale = Math.min(1, maxDimension / Math.max(width, height));
+        const canvas = document.createElement("canvas");
+        canvas.width = Math.max(1, Math.round(width * scale));
+        canvas.height = Math.max(1, Math.round(height * scale));
+        const context = canvas.getContext("2d");
+        if (!context) {
+          throw new Error("Video preview frame could not be generated.");
+        }
+        context.drawImage(video, 0, 0, canvas.width, canvas.height);
+        finish(canvas.toDataURL("image/jpeg", VIDEO_MODERATION_FRAME_QUALITY));
+      } catch (error) {
+        finish(null, error);
+      }
+    }
+
+    video.preload = "metadata";
+    video.muted = true;
+    video.playsInline = true;
+    video.src = objectUrl;
+
+    video.addEventListener("error", () => {
+      finish(null, new Error("Video preview frame could not be generated."));
+    }, { once: true });
+
+    video.addEventListener("loadedmetadata", () => {
+      const duration = Number(video.duration || 0);
+      if (!Number.isFinite(duration) || duration <= 0) {
+        video.addEventListener("loadeddata", capture, { once: true });
+        return;
+      }
+      const targetTime = Math.min(Math.max(duration * captureRatio, 0.1), Math.max(duration - 0.1, 0.1));
+      video.addEventListener("seeked", capture, { once: true });
+      try {
+        video.currentTime = targetTime;
+      } catch (error) {
+        video.addEventListener("loadeddata", capture, { once: true });
+      }
+    }, { once: true });
+  });
+}
+
+async function buildVideoModerationFrames(coverFile, attachmentFiles = [], existingAttachmentCount = 0) {
+  const frames = [];
+  if (coverFile && isVideoKind(coverFile.type)) {
+    try {
+      frames.push({
+        sourceType: "cover",
+        label: "Cover video",
+        imageUrl: await videoFileToModerationFrame(coverFile),
+      });
+    } catch (error) {
+      console.warn("Cover video moderation frame could not be generated.", error);
+    }
+  }
+
+  const source = Array.isArray(attachmentFiles) ? attachmentFiles : Array.from(attachmentFiles || []);
+  for (let index = 0; index < source.length; index += 1) {
+    const file = source[index];
+    if (!isVideoKind(file?.type)) {
+      continue;
+    }
+    try {
+      frames.push({
+        sourceType: "attachment",
+        attachmentIndex: existingAttachmentCount + index,
+        label: file.name || `Attachment ${existingAttachmentCount + index + 1}`,
+        imageUrl: await videoFileToModerationFrame(file),
+      });
+    } catch (error) {
+      console.warn("Attachment video moderation frame could not be generated.", error);
+    }
+  }
+  return frames;
+}
+
 function opportunityDraftToFirestorePayload(draft, status) {
   return {
     ...draft,
@@ -684,7 +852,7 @@ function opportunityDraftToFirestorePayload(draft, status) {
   };
 }
 
-async function submitOpportunityReviewRequest({ user, mode, opportunityId, payload }) {
+async function submitOpportunityReviewRequest({ user, mode, opportunityId, payload, visualModerationFrames = [] }) {
   const idToken = await user.getIdToken();
   let response;
   try {
@@ -698,6 +866,7 @@ async function submitOpportunityReviewRequest({ user, mode, opportunityId, paylo
         mode,
         opportunityId,
         payload,
+        visualModerationFrames,
       }),
     });
   } catch (error) {
@@ -1872,6 +2041,11 @@ async function requireUserForAction() {
 }
 
 async function uploadFile(file, folder, uid) {
+  if (folder === "opportunity-media") {
+    validateCoverUploadFile(file);
+  } else if (folder === "opportunity-attachments") {
+    validateAttachmentUploadFiles([file], 0);
+  }
   const fileName = `${Date.now()}-${slugify(String(file.name || "file").replace(/\.[^.]+$/, "")) || "file"}${fileExtension(file)}`;
   const storageRef = ref(storage, `${folder}/${uid}/${fileName}`);
   try {
@@ -4470,6 +4644,8 @@ async function initCreatePost(user, profile) {
   const saveDraftButton = qs("#saveDraftButton");
   const deleteButton = qs("#deleteOpportunityButton");
   const coverPreview = qs("#coverPreview");
+  const coverInput = qs("#coverMedia");
+  const attachmentsInput = qs("#attachments");
   const captionInput = qs("#caption");
   const captionCount = qs("#captionCount");
   const existingAttachmentsWrap = qs("#existingAttachments");
@@ -4696,6 +4872,10 @@ async function initCreatePost(user, profile) {
     if (caption.length > MAX_CAPTION_LENGTH) {
       throw new Error(`"${title}" is over the ${MAX_CAPTION_LENGTH}-character description limit.`);
     }
+    const attachments = normalizeImportedAttachments(rawPost.attachments);
+    if (attachments.length > ATTACHMENT_MAX_COUNT) {
+      throw new Error(`"${title}" has more than ${ATTACHMENT_MAX_COUNT} attachments.`);
+    }
     return baseOpportunityDraftPayload({
       title,
       caption,
@@ -4712,7 +4892,7 @@ async function initCreatePost(user, profile) {
       aboutCompany: String(rawPost.aboutCompany || "").trim(),
       allowComments: rawPost.allowComments !== false,
       media: { url: DEFAULT_COVER, alt: title, kind: "image/jpeg" },
-      attachments: normalizeImportedAttachments(rawPost.attachments),
+      attachments,
     });
   }
 
@@ -4863,9 +5043,17 @@ async function initCreatePost(user, profile) {
     renderExistingAttachments();
   });
 
-  qs("#coverMedia").addEventListener("change", (event) => {
+  coverInput?.addEventListener("change", (event) => {
     const file = event.target.files?.[0];
     if (!file || !coverPreview) {
+      return;
+    }
+    try {
+      validateCoverUploadFile(file);
+      setStatus(status, "");
+    } catch (error) {
+      event.target.value = "";
+      setStatus(status, error.message || "Cover media is invalid.", "error");
       return;
     }
     if (coverPreviewObjectUrl) {
@@ -4873,6 +5061,16 @@ async function initCreatePost(user, profile) {
     }
     coverPreviewObjectUrl = URL.createObjectURL(file);
     paintCoverPreview(coverPreviewObjectUrl, file.type, file.name || "Cover preview");
+  });
+
+  attachmentsInput?.addEventListener("change", (event) => {
+    try {
+      validateAttachmentUploadFiles(event.target.files || [], existingAttachmentsState.length);
+      setStatus(status, "");
+    } catch (error) {
+      event.target.value = "";
+      setStatus(status, error.message || "Attachments are invalid.", "error");
+    }
   });
 
   bulkImportFile?.addEventListener("change", async (event) => {
@@ -4959,8 +5157,10 @@ async function initCreatePost(user, profile) {
       const action = event.submitter?.dataset.postAction === "draft" ? "draft" : "publish";
       const savingDraft = action === "draft";
       const formData = new FormData(form);
-      const coverFile = qs("#coverMedia").files?.[0];
-      const attachmentFiles = Array.from(qs("#attachments").files || []);
+      const coverFile = coverInput?.files?.[0];
+      const attachmentFiles = Array.from(attachmentsInput?.files || []);
+      validateCoverUploadFile(coverFile);
+      validateAttachmentUploadFiles(attachmentFiles, existingAttachmentsState.length);
       let media = editingOpportunity?.media || { url: DEFAULT_COVER, alt: String(formData.get("title") || "").trim() || "Opportunity cover" };
       if (coverFile) {
         media = await uploadFile(coverFile, "opportunity-media", user.uid);
@@ -4975,6 +5175,9 @@ async function initCreatePost(user, profile) {
         media,
         [...existingAttachmentsState, ...uploadedAttachments],
       );
+      const visualModerationFrames = savingDraft
+        ? []
+        : await buildVideoModerationFrames(coverFile, attachmentFiles, existingAttachmentsState.length);
 
       if (savingDraft) {
         const draftDocPayload = opportunityDraftToFirestorePayload(draftPayload, "draft");
@@ -5001,6 +5204,7 @@ async function initCreatePost(user, profile) {
           mode: editingOpportunity ? "update" : "create",
           opportunityId: editingOpportunity?.id || "",
           payload: draftPayload,
+          visualModerationFrames,
         });
 
         if (!reviewResult?.unavailable) {
