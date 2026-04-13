@@ -47,7 +47,7 @@ const FEED_WHEEL_THRESHOLD = 12;
 const FEED_DRAG_THRESHOLD_PX = 90;
 const FEED_DRAG_THRESHOLD_RATIO = 0.16;
 const FEED_DRAG_RESISTANCE = 0.92;
-const FEED_EDGE_DRAG_RESISTANCE = 0.35;
+const FEED_BUFFER_EDGE_THRESHOLD = 2;
 const FEED_VIEWPORT_TRANSITION = "transform 520ms cubic-bezier(0.22, 1, 0.36, 1)";
 const SETTINGS_PREFS_KEY = "oval.settings.preferences";
 const PROFILE_CACHE_PREFIX = "oval.profile.";
@@ -2158,14 +2158,7 @@ function installFeedViewportPager(feed, viewport, options = {}) {
 
     touchCurrentY = event.changedTouches[0]?.clientY || touchStartY;
     const rawDelta = touchCurrentY - touchStartY;
-    const atFirstCard = activeIndex === 0;
-    const atLastCard = activeIndex === getMaxIndex();
-    const draggingDownAtTop = rawDelta > 0 && atFirstCard;
-    const draggingUpAtBottom = rawDelta < 0 && atLastCard;
-
-    dragOffsetY = (draggingDownAtTop || draggingUpAtBottom)
-      ? rawDelta * FEED_EDGE_DRAG_RESISTANCE
-      : rawDelta * FEED_DRAG_RESISTANCE;
+    dragOffsetY = rawDelta * FEED_DRAG_RESISTANCE;
 
     const baseOffset = -getCardOffset(activeIndex);
     setViewportTransform(baseOffset + dragOffsetY);
@@ -2230,6 +2223,14 @@ function installFeedViewportPager(feed, viewport, options = {}) {
     },
     getActiveIndex() {
       return activeIndex;
+    },
+    shiftIndex(delta) {
+      activeIndex = clampNumber(activeIndex + delta, 0, getMaxIndex());
+      setViewportTransition(false);
+      setViewportTransform(-getCardOffset(activeIndex));
+      window.requestAnimationFrame(() => {
+        setViewportTransition(true);
+      });
     },
     snapToIndex,
   };
@@ -3059,7 +3060,8 @@ async function initFeed(user) {
 
   installFeedPullToRefresh(slides, status);
 
-  let renderedCount = 0;
+  let renderStartIndex = 0;
+  let renderEndIndex = 0;
 
   function feedModeClass(mode) {
     return mode === activeMode
@@ -3083,14 +3085,19 @@ async function initFeed(user) {
     return opportunities.filter((item) => item.creatorUid && followingIds.has(item.creatorUid));
   }
 
+  function opportunityAtLoopIndex(loopIndex) {
+    if (!activeOpportunities.length) {
+      return null;
+    }
+    const normalizedIndex = ((loopIndex % activeOpportunities.length) + activeOpportunities.length) % activeOpportunities.length;
+    return activeOpportunities[normalizedIndex];
+  }
+
   function appendFeedBatch() {
     if (!activeOpportunities.length) {
       return false;
     }
-    const batch = Array.from({ length: FEED_BATCH_SIZE }, (_, index) => {
-      const sourceIndex = (renderedCount + index) % activeOpportunities.length;
-      return activeOpportunities[sourceIndex];
-    });
+    const batch = Array.from({ length: FEED_BATCH_SIZE }, (_, index) => opportunityAtLoopIndex(renderEndIndex + index));
     if (!batch.length) {
       return false;
     }
@@ -3098,13 +3105,29 @@ async function initFeed(user) {
       .map((opportunity) => renderFeedSlide(opportunity, states.get(opportunity.id) || {}))
       .join("");
     viewport.insertAdjacentHTML("beforeend", newMarkup);
-    renderedCount += batch.length;
+    renderEndIndex += batch.length;
     return true;
+  }
+
+  function prependFeedBatch() {
+    if (!activeOpportunities.length) {
+      return 0;
+    }
+    const batch = Array.from({ length: FEED_BATCH_SIZE }, (_, index) => opportunityAtLoopIndex(renderStartIndex - FEED_BATCH_SIZE + index));
+    if (!batch.length) {
+      return 0;
+    }
+    const newMarkup = batch
+      .map((opportunity) => renderFeedSlide(opportunity, states.get(opportunity.id) || {}))
+      .join("");
+    viewport.insertAdjacentHTML("afterbegin", newMarkup);
+    renderStartIndex -= batch.length;
+    return batch.length;
   }
 
   function ensureFeedBuffer() {
     let safety = 0;
-    while (slides.scrollHeight - slides.clientHeight <= slides.clientHeight * 0.5 && safety < 3) {
+    while (qsa("[data-opportunity-id]", viewport).length < FEED_BATCH_SIZE * 3 && safety < 3) {
       if (!appendFeedBatch()) {
         break;
       }
@@ -3116,6 +3139,16 @@ async function initFeed(user) {
     if (targetIndex >= Math.max(0, total - 3)) {
       appendFeedBatch();
       ensureFeedBuffer();
+    }
+  }
+
+  function maybePrependMore(targetIndex = 0) {
+    if (targetIndex > FEED_BUFFER_EDGE_THRESHOLD) {
+      return;
+    }
+    const addedCount = prependFeedBatch();
+    if (addedCount) {
+      pager?.shiftIndex(addedCount);
     }
   }
 
@@ -3169,7 +3202,8 @@ async function initFeed(user) {
   function rebuildFeed(options = {}) {
     const loading = options.loading === true;
     viewport.innerHTML = "";
-    renderedCount = 0;
+    renderStartIndex = 0;
+    renderEndIndex = 0;
     activeOpportunities = selectedOpportunities();
     paintModeButtons();
     setStatus(status, "");
@@ -3195,9 +3229,10 @@ async function initFeed(user) {
       return;
     }
 
+    prependFeedBatch();
     appendFeedBatch();
     ensureFeedBuffer();
-    pager?.refresh({ reset: true, immediate: true });
+    pager?.snapToIndex(FEED_BATCH_SIZE, { immediate: true });
   }
 
   function hydrateFeedStates(nextStates) {
@@ -3219,7 +3254,8 @@ async function initFeed(user) {
   pager = installFeedViewportPager(slides, viewport, {
     onActiveIndexChange(index, section, sections) {
       maybeAppendMore(index, sections.length);
-      syncActiveFeedSlide(section);
+      maybePrependMore(index);
+      syncActiveFeedSlide();
     },
   });
 
