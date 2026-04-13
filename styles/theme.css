@@ -69,12 +69,6 @@ body.app-loading {
   bottom: calc(7.75rem + var(--safe-area-bottom)) !important;
 }
 
-.feed-paged {
-  overscroll-behavior-y: contain;
-  scroll-snap-stop: always;
-  touch-action: pan-x pinch-zoom;
-}
-
 .comment-thread {
   min-width: 0;
 }
