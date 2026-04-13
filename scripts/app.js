@@ -42,6 +42,12 @@ const FEED_BATCH_SIZE = 4;
 const FEED_CACHE_LIMIT = 10;
 const FEED_VIDEO_SOUND_KEY = "oval.feedVideoSoundEnabled";
 const FEED_CACHE_KEY = "oval.feed.publicOpportunities.v1";
+const FEED_PAGE_SNAP_RATIO = 0.16;
+const FEED_PAGE_FLING_THRESHOLD = 420;
+const FEED_PAGE_TOUCH_SLOP = 10;
+const FEED_PAGE_AXIS_LOCK = 24;
+const FEED_PAGE_WHEEL_IDLE_MS = 70;
+const FEED_PAGE_SAMPLE_WINDOW_MS = 140;
 const SETTINGS_PREFS_KEY = "oval.settings.preferences";
 const PROFILE_CACHE_PREFIX = "oval.profile.";
 const APP_LOADER_MIN_MS = 220;
@@ -97,6 +103,10 @@ function qs(selector, root = document) {
 
 function qsa(selector, root = document) {
   return Array.from(root.querySelectorAll(selector));
+}
+
+function clampNumber(value, min, max) {
+  return Math.min(max, Math.max(min, value));
 }
 
 function ensureMetaTag(selector, attributes, content) {
@@ -1995,6 +2005,294 @@ function installFeedPullToRefresh(slides, status) {
   });
 }
 
+function installFeedVerticalPager(slides, options = {}) {
+  if (!slides || slides.dataset.feedPagerBound === "1") {
+    return;
+  }
+
+  const ensureForwardSections = typeof options.ensureForwardSections === "function"
+    ? options.ensureForwardSections
+    : () => {};
+
+  slides.dataset.feedPagerBound = "1";
+  slides.classList.add("feed-paged");
+
+  let animationFrame = 0;
+  let animating = false;
+  let touchState = null;
+  let wheelState = null;
+  let wheelTimer = 0;
+
+  function sections() {
+    return Array.from(slides.children);
+  }
+
+  function nearestSectionIndex(scrollTop = slides.scrollTop) {
+    const nodes = sections();
+    if (!nodes.length) {
+      return 0;
+    }
+
+    let bestIndex = 0;
+    let bestDistance = Number.POSITIVE_INFINITY;
+    nodes.forEach((node, index) => {
+      const distance = Math.abs(node.offsetTop - scrollTop);
+      if (distance < bestDistance) {
+        bestDistance = distance;
+        bestIndex = index;
+      }
+    });
+    return bestIndex;
+  }
+
+  function clearWheelTimer() {
+    if (wheelTimer) {
+      window.clearTimeout(wheelTimer);
+      wheelTimer = 0;
+    }
+  }
+
+  function cancelAnimation() {
+    if (animationFrame) {
+      window.cancelAnimationFrame(animationFrame);
+      animationFrame = 0;
+    }
+    animating = false;
+  }
+
+  function boundedTargetIndex(index) {
+    const maxIndex = Math.max(0, sections().length - 1);
+    return clampNumber(index, 0, maxIndex);
+  }
+
+  function ensureAdjacentIndex(anchorIndex, direction) {
+    if (direction > 0 && anchorIndex >= sections().length - 1) {
+      ensureForwardSections();
+    }
+    return boundedTargetIndex(anchorIndex + direction);
+  }
+
+  function pushSample(samples, value) {
+    const now = performance.now();
+    samples.push({ value, time: now });
+    return samples.filter((sample) => now - sample.time <= FEED_PAGE_SAMPLE_WINDOW_MS);
+  }
+
+  function recentVelocity(samples) {
+    if (samples.length < 2) {
+      return 0;
+    }
+
+    const latest = samples[samples.length - 1];
+    let startIndex = samples.length - 2;
+    while (startIndex > 0 && latest.time - samples[startIndex - 1].time <= FEED_PAGE_SAMPLE_WINDOW_MS) {
+      startIndex -= 1;
+    }
+
+    const first = samples[startIndex];
+    const elapsed = latest.time - first.time;
+    if (elapsed < 16) {
+      return 0;
+    }
+
+    return ((latest.value - first.value) / elapsed) * 1000;
+  }
+
+  function animateToSection(index, initialVelocity = 0) {
+    const nodes = sections();
+    if (!nodes.length) {
+      return;
+    }
+
+    const targetIndex = boundedTargetIndex(index);
+    const targetTop = nodes[targetIndex]?.offsetTop ?? 0;
+    const startTop = slides.scrollTop;
+    const distance = targetTop - startTop;
+    if (Math.abs(distance) < 1) {
+      slides.scrollTop = targetTop;
+      return;
+    }
+
+    cancelAnimation();
+    animating = true;
+
+    const duration = clampNumber(
+      320 - Math.min(80, Math.abs(initialVelocity) * 0.05) + Math.min(60, Math.abs(distance) * 0.04),
+      220,
+      380,
+    );
+    const startedAt = performance.now();
+
+    function step(now) {
+      const progress = Math.min(1, (now - startedAt) / duration);
+      const eased = 1 - ((1 - progress) ** 3);
+      slides.scrollTop = startTop + (distance * eased);
+      if (progress < 1) {
+        animationFrame = window.requestAnimationFrame(step);
+        return;
+      }
+      slides.scrollTop = targetTop;
+      animationFrame = 0;
+      animating = false;
+    }
+
+    animationFrame = window.requestAnimationFrame(step);
+  }
+
+  function settleGesture(anchorIndex, direction, velocity = 0) {
+    const targetIndex = direction === 0
+      ? nearestSectionIndex()
+      : ensureAdjacentIndex(anchorIndex, direction);
+    if (direction !== 0) {
+      triggerTouchHaptic("selection");
+    }
+    animateToSection(targetIndex, velocity);
+  }
+
+  function finishWheelGesture() {
+    if (!wheelState) {
+      return;
+    }
+
+    const gesture = wheelState;
+    wheelState = null;
+    clearWheelTimer();
+
+    const velocity = recentVelocity(gesture.samples);
+    const direction = Math.sign(gesture.totalDelta || velocity);
+    settleGesture(gesture.anchorIndex, direction, velocity);
+  }
+
+  slides.addEventListener("touchstart", (event) => {
+    if (event.touches.length !== 1) {
+      touchState = null;
+      return;
+    }
+
+    cancelAnimation();
+    wheelState = null;
+    clearWheelTimer();
+
+    const anchorIndex = nearestSectionIndex();
+    ensureForwardSections();
+    const nodes = sections();
+    const safeAnchorIndex = clampNumber(anchorIndex, 0, Math.max(0, nodes.length - 1));
+    const anchorTop = nodes[safeAnchorIndex]?.offsetTop ?? slides.scrollTop;
+    const touch = event.touches[0];
+
+    touchState = {
+      axis: "",
+      anchorIndex: safeAnchorIndex,
+      anchorTop,
+      minTop: nodes[Math.max(0, safeAnchorIndex - 1)]?.offsetTop ?? anchorTop,
+      maxTop: nodes[Math.min(nodes.length - 1, safeAnchorIndex + 1)]?.offsetTop ?? anchorTop,
+      startX: touch.clientX,
+      startY: touch.clientY,
+      samples: [{ value: slides.scrollTop, time: performance.now() }],
+    };
+  }, { passive: true });
+
+  slides.addEventListener("touchmove", (event) => {
+    if (!touchState || event.touches.length !== 1) {
+      return;
+    }
+
+    const touch = event.touches[0];
+    const deltaX = touch.clientX - touchState.startX;
+    const deltaY = touch.clientY - touchState.startY;
+
+    if (!touchState.axis) {
+      if (Math.abs(deltaX) < FEED_PAGE_TOUCH_SLOP && Math.abs(deltaY) < FEED_PAGE_TOUCH_SLOP) {
+        return;
+      }
+
+      touchState.axis = Math.abs(deltaY) > Math.max(FEED_PAGE_AXIS_LOCK, Math.abs(deltaX))
+        ? "vertical"
+        : "horizontal";
+
+      if (touchState.axis !== "vertical") {
+        touchState = null;
+        return;
+      }
+    }
+
+    if (touchState.axis !== "vertical") {
+      return;
+    }
+
+    event.preventDefault();
+    const nextTop = clampNumber(touchState.anchorTop - deltaY, touchState.minTop, touchState.maxTop);
+    slides.scrollTop = nextTop;
+    touchState.samples = pushSample(touchState.samples, slides.scrollTop);
+  }, { passive: false });
+
+  function finishTouchGesture() {
+    if (!touchState) {
+      return;
+    }
+
+    const gesture = touchState;
+    touchState = null;
+
+    if (gesture.axis !== "vertical") {
+      return;
+    }
+
+    const delta = slides.scrollTop - gesture.anchorTop;
+    const velocity = recentVelocity(gesture.samples);
+    let direction = 0;
+
+    if (Math.abs(delta) >= slides.clientHeight * FEED_PAGE_SNAP_RATIO || Math.abs(velocity) >= FEED_PAGE_FLING_THRESHOLD) {
+      direction = Math.sign(delta || velocity);
+    }
+
+    settleGesture(gesture.anchorIndex, direction, velocity);
+  }
+
+  slides.addEventListener("touchend", finishTouchGesture, { passive: true });
+  slides.addEventListener("touchcancel", () => {
+    cancelAnimation();
+    if (!touchState) {
+      return;
+    }
+    settleGesture(touchState.anchorIndex, 0, 0);
+    touchState = null;
+  }, { passive: true });
+
+  slides.addEventListener("wheel", (event) => {
+    if (Math.abs(event.deltaY) <= Math.abs(event.deltaX) || event.deltaY === 0) {
+      return;
+    }
+
+    event.preventDefault();
+
+    if (animating) {
+      return;
+    }
+
+    const now = performance.now();
+    if (!wheelState || now - wheelState.lastEventAt > FEED_PAGE_WHEEL_IDLE_MS) {
+      const anchorIndex = nearestSectionIndex();
+      if (event.deltaY > 0) {
+        ensureForwardSections();
+      }
+      wheelState = {
+        anchorIndex,
+        totalDelta: 0,
+        lastEventAt: now,
+        samples: [{ value: 0, time: now }],
+      };
+    }
+
+    wheelState.totalDelta += event.deltaY;
+    wheelState.lastEventAt = now;
+    wheelState.samples = pushSample(wheelState.samples, wheelState.totalDelta);
+
+    clearWheelTimer();
+    wheelTimer = window.setTimeout(finishWheelGesture, FEED_PAGE_WHEEL_IDLE_MS);
+  }, { passive: false });
+}
+
 async function completeNativeGoogleSignIn(idToken) {
   const button = qs("#googleContinue");
   const status = qs("#googleStatus");
@@ -2914,6 +3212,15 @@ async function initFeed(user) {
       appendFeedBatch();
     }
   }
+
+  installFeedVerticalPager(slides, {
+    ensureForwardSections() {
+      if (slides.scrollHeight - slides.scrollTop - slides.clientHeight <= slides.clientHeight * 2.5) {
+        appendFeedBatch();
+      }
+      ensureFeedBuffer();
+    },
+  });
 
   function renderFeedEmpty(message) {
     slides.innerHTML = `
