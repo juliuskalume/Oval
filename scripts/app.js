@@ -6,6 +6,7 @@ import {
   collection,
   createUserWithEmailAndPassword,
   db,
+  deleteDoc,
   doc,
   getDoc,
   getDocs,
@@ -1410,6 +1411,9 @@ function notificationIcon(item) {
   if (item?.type === "moderation-archived") {
     return "inventory_2";
   }
+  if (item?.type === "moderation-deleted") {
+    return "delete";
+  }
   return "notifications";
 }
 
@@ -1421,6 +1425,7 @@ function notificationFilterCategory(item) {
     item?.type === "application"
     || item?.type === "moderation-approved"
     || item?.type === "moderation-archived"
+    || item?.type === "moderation-deleted"
   ) {
     return "opportunities";
   }
@@ -1680,6 +1685,61 @@ async function deleteOpportunityComment(opportunity, comment, comments) {
     mode: "hard",
     removedIds: [comment.id],
   };
+}
+
+function canDeleteOpportunity(opportunity, user, profile) {
+  if (!opportunity?.id || opportunity.seeded || !user?.uid || !profile) {
+    return false;
+  }
+  return profile.role === "admin" || opportunity.creatorUid === user.uid;
+}
+
+function removeCachedOpportunity(opportunityId) {
+  if (!opportunityId) {
+    return;
+  }
+  writeCachedPublicOpportunities(
+    readCachedPublicOpportunities().filter((item) => item.id !== opportunityId),
+  );
+  try {
+    sessionStorage.removeItem(`oval.viewed.${opportunityId}`);
+  } catch (error) {}
+}
+
+async function deleteOpportunity(opportunity, user, profile) {
+  if (!canDeleteOpportunity(opportunity, user, profile)) {
+    throw new Error("You cannot delete this post.");
+  }
+
+  const confirmed = await confirmAction({
+    title: "Delete post?",
+    message: "This permanently removes the post from Oval. This action cannot be undone.",
+    confirmLabel: "Delete post",
+    cancelLabel: "Keep post",
+    icon: "delete",
+    tone: "danger",
+  });
+  if (!confirmed) {
+    return false;
+  }
+
+  await deleteDoc(doc(db, "opportunities", opportunity.id));
+  removeCachedOpportunity(opportunity.id);
+
+  if (profile.role === "admin" && opportunity.creatorUid && opportunity.creatorUid !== user.uid) {
+    await createNotification(opportunity.creatorUid, {
+      type: "moderation-deleted",
+      title: "Opportunity deleted",
+      body: `${opportunity.title} was deleted by an admin.`,
+    }).catch((error) => {
+      console.warn("Delete notification failed.", error);
+    });
+  }
+
+  window.dispatchEvent(new CustomEvent("oval:opportunity-deleted", {
+    detail: { opportunityId: opportunity.id },
+  }));
+  return true;
 }
 
 async function requireUserForAction() {
@@ -3048,6 +3108,19 @@ async function initDetails(user, profile) {
   const saveButtons = qsa("[data-details-save]");
   const appliedButton = qs("#markAppliedButton");
   const applyButton = qs("#applyNowButton");
+  const manageActions = qs("#detailsManageActions");
+  const editLink = qs("#detailsEditLink");
+  const deleteButton = qs("#detailsDeleteButton");
+  const canDelete = canDeleteOpportunity(opportunity, user, profile);
+
+  if (canDelete) {
+    manageActions?.classList.remove("hidden");
+    if (editLink) {
+      editLink.href = `create-post.html?id=${encodeURIComponent(opportunity.id)}`;
+    }
+  } else {
+    manageActions?.classList.add("hidden");
+  }
 
   function paintButtons(savedState) {
     saveButtons.forEach((button) => {
@@ -3107,6 +3180,24 @@ async function initDetails(user, profile) {
       }
     });
   }
+
+  deleteButton?.addEventListener("click", async () => {
+    deleteButton.disabled = true;
+    try {
+      const deleted = await deleteOpportunity(opportunity, user, profile);
+      if (!deleted) {
+        return;
+      }
+      location.href = profile?.role === "admin" && opportunity.creatorUid !== user?.uid
+        ? "admin-moderation.html"
+        : "creator-dashboard.html";
+    } catch (error) {
+      console.error(error);
+      setStatus(status, error.message || "Delete failed.", "error");
+    } finally {
+      deleteButton.disabled = false;
+    }
+  });
 }
 
 async function initComments(user, profile) {
@@ -3669,10 +3760,10 @@ async function initProfile(user, profile) {
   }
 
   const viewingOwnProfile = viewedProfile.id === user.uid;
-  const viewedPublicOpportunities = viewingOwnProfile
+  let viewedPublicOpportunities = viewingOwnProfile
     ? await loadUserOpportunities(user.uid)
     : (await loadPublicOpportunities()).filter((item) => item.creatorUid === viewedProfile.id);
-  const publicOpportunities = viewingOwnProfile
+  let publicOpportunities = viewingOwnProfile
     ? await loadPublicOpportunities()
     : viewedPublicOpportunities;
   const states = await loadUserStates(user.uid);
@@ -3798,6 +3889,7 @@ async function initProfile(user, profile) {
                 <div class="mt-4 flex gap-2">
                   <a href="${detailsUrl(item.id)}" class="px-4 py-2 rounded-xl bg-white text-black text-sm font-semibold">Details</a>
                   <a href="create-post.html?id=${encodeURIComponent(item.id)}" class="px-4 py-2 rounded-xl bg-white/10 text-white text-sm font-semibold border border-white/10">Edit</a>
+                  <button type="button" data-delete-opportunity="${escapeHtml(item.id)}" class="px-4 py-2 rounded-xl bg-red-500/15 text-red-100 text-sm font-semibold border border-red-400/30">Delete</button>
                 </div>
               </div>
             </div>
@@ -3893,10 +3985,39 @@ async function initProfile(user, profile) {
   refreshCounts();
   paintFollowButton();
   renderTab();
-  await bindOpportunityActionButtons(content, publicOpportunities, states, user, status);
+  await bindOpportunityActionButtons(content, () => publicOpportunities, states, user, status);
   window.addEventListener("oval:state-changed", () => {
     if (viewingOwnProfile && (activeTab === "saved" || activeTab === "applied")) {
       renderTab();
+    }
+  });
+  content.addEventListener("click", async (event) => {
+    const button = event.target.closest("[data-delete-opportunity]");
+    if (!button || !viewingOwnProfile) {
+      return;
+    }
+    const item = viewedPublicOpportunities.find((entry) => entry.id === button.dataset.deleteOpportunity);
+    if (!item) {
+      return;
+    }
+    button.disabled = true;
+    try {
+      const deleted = await deleteOpportunity(item, user, profile);
+      if (!deleted) {
+        return;
+      }
+      viewedPublicOpportunities = viewedPublicOpportunities.filter((entry) => entry.id !== item.id);
+      publicOpportunities = publicOpportunities.filter((entry) => entry.id !== item.id);
+      opportunityMap.delete(item.id);
+      states.delete(item.id);
+      refreshCounts();
+      renderTab();
+      setStatus(status, "Post deleted.", "success");
+    } catch (error) {
+      console.error(error);
+      setStatus(status, error.message || "Delete failed.", "error");
+    } finally {
+      button.disabled = false;
     }
   });
 }
@@ -3911,6 +4032,7 @@ async function initCreatePost(user, profile) {
   const form = qs("#createPostForm");
   const status = qs("#createPostStatus");
   const submit = qs("#publishOpportunityButton");
+  const deleteButton = qs("#deleteOpportunityButton");
   const coverPreview = qs("#coverPreview");
   const captionInput = qs("#caption");
   const captionCount = qs("#captionCount");
@@ -3987,6 +4109,9 @@ async function initCreatePost(user, profile) {
     paintCoverPreview(opportunityMedia(editingOpportunity), opportunityMediaKind(editingOpportunity), editingOpportunity.title);
     existingAttachmentsState.push(...(editingOpportunity.attachments || []));
     renderExistingAttachments();
+    if (deleteButton && canDeleteOpportunity(editingOpportunity, user, profile)) {
+      deleteButton.classList.remove("hidden");
+    }
   }
 
   if (!editingOpportunity) {
@@ -4141,6 +4266,27 @@ async function initCreatePost(user, profile) {
       submit.disabled = false;
     }
   });
+
+  deleteButton?.addEventListener("click", async () => {
+    if (!editingOpportunity) {
+      return;
+    }
+    deleteButton.disabled = true;
+    try {
+      const deleted = await deleteOpportunity(editingOpportunity, user, profile);
+      if (!deleted) {
+        return;
+      }
+      location.href = profile.role === "admin" && editingOpportunity.creatorUid !== user.uid
+        ? "admin-moderation.html"
+        : "creator-dashboard.html";
+    } catch (error) {
+      console.error(error);
+      setStatus(status, error.message || "Delete failed.", "error");
+    } finally {
+      deleteButton.disabled = false;
+    }
+  });
 }
 
 async function initCreatorDashboard(user, profile) {
@@ -4150,20 +4296,33 @@ async function initCreatorDashboard(user, profile) {
     return;
   }
 
-  const myPosts = await loadUserOpportunities(user.uid);
-  const totalViews = myPosts.reduce((sum, item) => sum + Number(item.viewsCount || 0), 0);
-  const totalApplications = myPosts.reduce((sum, item) => sum + Number(item.appliedCount || 0), 0);
-  const totalSaves = myPosts.reduce((sum, item) => sum + Number(item.savesCount || 0), 0);
-
-  setText("#dashboardViews", formatCompact(totalViews));
-  setText("#dashboardApplications", formatCompact(totalApplications));
-  setText("#dashboardSaves", formatCompact(totalSaves));
+  let myPosts = await loadUserOpportunities(user.uid);
 
   const postsList = qs("#dashboardPosts");
-  if (!myPosts.length) {
-    postsList.innerHTML =
-      '<div class="rounded-3xl bg-white/5 border border-white/10 p-6 text-sm text-white/60">You have not posted any opportunities yet.</div>';
-  } else {
+  const status = qs("#dashboardStatus");
+
+  function syncSummary() {
+    const totalViews = myPosts.reduce((sum, item) => sum + Number(item.viewsCount || 0), 0);
+    const totalApplications = myPosts.reduce((sum, item) => sum + Number(item.appliedCount || 0), 0);
+    const totalSaves = myPosts.reduce((sum, item) => sum + Number(item.savesCount || 0), 0);
+    setText("#dashboardViews", formatCompact(totalViews));
+    setText("#dashboardApplications", formatCompact(totalApplications));
+    setText("#dashboardSaves", formatCompact(totalSaves));
+    const divisor = Math.max(myPosts.length, 1);
+    qs("#funnelViewsFill").style.width = `${Math.min(100, Math.round(totalViews / divisor / 150))}%`;
+    qs("#funnelSavesFill").style.width = `${Math.min(100, Math.round(totalSaves / divisor / 15))}%`;
+    qs("#funnelAppliedFill").style.width = `${Math.min(100, Math.round(totalApplications / divisor / 8))}%`;
+    setText("#funnelViewsValue", formatCompact(totalViews));
+    setText("#funnelSavesValue", formatCompact(totalSaves));
+    setText("#funnelAppliedValue", formatCompact(totalApplications));
+  }
+
+  function renderPosts() {
+    if (!myPosts.length) {
+      postsList.innerHTML =
+        '<div class="rounded-3xl bg-white/5 border border-white/10 p-6 text-sm text-white/60">You have not posted any opportunities yet.</div>';
+      return;
+    }
     postsList.innerHTML = myPosts
       .map(
         (item) => {
@@ -4178,7 +4337,10 @@ async function initCreatorDashboard(user, profile) {
                 <span class="text-[10px] px-2 py-1 rounded-full ${itemStatus.classes}">${escapeHtml(itemStatus.label)}</span>
               </div>
             </div>
-            <a href="create-post.html?id=${encodeURIComponent(item.id)}" class="text-white/70"><span class="material-symbols-outlined">edit</span></a>
+            <div class="flex items-center gap-2">
+              <a href="create-post.html?id=${encodeURIComponent(item.id)}" class="text-white/70"><span class="material-symbols-outlined">edit</span></a>
+              <button type="button" data-dashboard-delete="${escapeHtml(item.id)}" class="text-red-200/90"><span class="material-symbols-outlined">delete</span></button>
+            </div>
           </div>
         `;
         },
@@ -4186,16 +4348,35 @@ async function initCreatorDashboard(user, profile) {
       .join("");
   }
 
-  const viewsFill = qs("#funnelViewsFill");
-  const savesFill = qs("#funnelSavesFill");
-  const appliedFill = qs("#funnelAppliedFill");
-  const divisor = Math.max(myPosts.length, 1);
-  viewsFill.style.width = `${Math.min(100, Math.round(totalViews / divisor / 150))}%`;
-  savesFill.style.width = `${Math.min(100, Math.round(totalSaves / divisor / 15))}%`;
-  appliedFill.style.width = `${Math.min(100, Math.round(totalApplications / divisor / 8))}%`;
-  setText("#funnelViewsValue", formatCompact(totalViews));
-  setText("#funnelSavesValue", formatCompact(totalSaves));
-  setText("#funnelAppliedValue", formatCompact(totalApplications));
+  syncSummary();
+  renderPosts();
+
+  postsList?.addEventListener("click", async (event) => {
+    const button = event.target.closest("[data-dashboard-delete]");
+    if (!button) {
+      return;
+    }
+    const item = myPosts.find((entry) => entry.id === button.dataset.dashboardDelete);
+    if (!item) {
+      return;
+    }
+    button.disabled = true;
+    try {
+      const deleted = await deleteOpportunity(item, user, profile);
+      if (!deleted) {
+        return;
+      }
+      myPosts = myPosts.filter((entry) => entry.id !== item.id);
+      syncSummary();
+      renderPosts();
+      setStatus(status, "Post deleted.", "success");
+    } catch (error) {
+      console.error(error);
+      setStatus(status, error.message || "Delete failed.", "error");
+    } finally {
+      button.disabled = false;
+    }
+  });
 }
 
 async function initAdminModeration(user, profile) {
@@ -4279,6 +4460,7 @@ async function initAdminModeration(user, profile) {
                 <a href="${detailsUrl(item.id)}" class="px-4 py-2 rounded-xl bg-white/10 border border-white/10 text-white font-semibold">Preview</a>
                 <button type="button" data-moderation-action="approve" data-id="${escapeHtml(item.id)}" class="px-4 py-2 rounded-xl bg-white text-black font-semibold">Approve</button>
                 <button type="button" data-moderation-action="archive" data-id="${escapeHtml(item.id)}" class="px-4 py-2 rounded-xl bg-red-500 text-white font-semibold">Archive</button>
+                <button type="button" data-moderation-action="delete" data-id="${escapeHtml(item.id)}" class="px-4 py-2 rounded-xl bg-red-500/15 text-red-100 border border-red-400/30 font-semibold">Delete</button>
               </div>
             </div>
           </div>
@@ -4345,9 +4527,19 @@ async function initAdminModeration(user, profile) {
     }
 
     button.disabled = true;
-    const nextStatus = button.dataset.moderationAction === "approve" ? "published" : "archived";
+    const action = button.dataset.moderationAction;
+    const nextStatus = action === "approve" ? "published" : "archived";
 
     try {
+      if (action === "delete") {
+        const deleted = await deleteOpportunity(item, user, profile);
+        if (!deleted) {
+          return;
+        }
+        setStatus(status, "Opportunity deleted.", "success");
+        await refresh();
+        return;
+      }
       await updateDoc(doc(db, "opportunities", item.id), {
         status: nextStatus,
         updatedAt: Timestamp.now(),
@@ -4372,6 +4564,7 @@ async function initAdminModeration(user, profile) {
     } catch (error) {
       console.error(error);
       setStatus(status, error.message || "Moderation action failed.", "error");
+    } finally {
       button.disabled = false;
     }
   });
