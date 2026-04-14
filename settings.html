@@ -33,13 +33,20 @@
 
       <section class="rounded-3xl bg-white/5 border border-white/10 p-4">
         <div class="flex items-center gap-3">
-          <img id="settingsAvatar" src="" alt="Your avatar" class="w-14 h-14 rounded-full object-cover" />
+          <div class="relative shrink-0">
+            <img id="settingsAvatar" src="" alt="Your avatar" class="w-14 h-14 rounded-full object-cover border border-white/10" />
+            <button id="settingsAvatarButton" type="button" class="absolute -bottom-1 -right-1 w-6 h-6 rounded-full bg-white text-black flex items-center justify-center border border-black/20 shadow-lg">
+              <span class="material-symbols-outlined text-[14px]">photo_camera</span>
+            </button>
+            <input id="settingsAvatarInput" type="file" accept="image/*" class="hidden" />
+          </div>
           <div class="min-w-0">
             <p id="settingsName" class="font-semibold truncate"></p>
             <p id="settingsHandle" class="text-sm text-white/60 truncate"></p>
             <p id="settingsEmail" class="text-xs text-white/45 truncate mt-1"></p>
           </div>
         </div>
+        <p class="mt-3 text-xs text-white/45">Tap the camera to update your profile picture. JPG, PNG, or WebP up to 5 MB.</p>
         <a id="settingsProfileLink" href="profile.html" class="inline-flex mt-4 px-4 py-2 rounded-xl bg-white/10 border border-white/10 text-sm font-semibold">
           View profile
         </a>

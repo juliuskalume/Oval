@@ -61,6 +61,7 @@ const APP_LOADER_MIN_MS = 220;
 const MB = 1024 * 1024;
 const COVER_IMAGE_MAX_BYTES = 5 * MB;
 const COVER_VIDEO_MAX_BYTES = 10 * MB;
+const AVATAR_MAX_BYTES = 5 * MB;
 const ATTACHMENT_MAX_BYTES = 5 * MB;
 const ATTACHMENT_MAX_COUNT = 5;
 const VIDEO_MODERATION_FRAME_MAX_DIMENSION = 960;
@@ -1433,6 +1434,18 @@ function validateCoverUploadFile(file) {
     throw new Error(
       `${isVideoKind(file.type) ? "Cover videos" : "Cover images"} can be up to ${formatByteSize(limit)}.`,
     );
+  }
+}
+
+function validateAvatarUploadFile(file) {
+  if (!file) {
+    return;
+  }
+  if (!isImageKind(file.type)) {
+    throw new Error("Avatar images must be JPG, PNG, or WebP.");
+  }
+  if (file.size > AVATAR_MAX_BYTES) {
+    throw new Error(`Avatar images can be up to ${formatByteSize(AVATAR_MAX_BYTES)}.`);
   }
 }
 
@@ -2908,6 +2921,8 @@ async function requireUserForAction() {
 async function uploadFile(file, folder, uid) {
   if (folder === "opportunity-media") {
     validateCoverUploadFile(file);
+  } else if (folder === "profile-avatars") {
+    validateAvatarUploadFile(file);
   } else if (folder === "opportunity-attachments") {
     validateAttachmentUploadFiles([file], 0);
   }
@@ -7131,6 +7146,8 @@ async function initSettings(user, profile) {
   const dashboardLink = qs("#settingsDashboardLink");
   const moderationLink = qs("#settingsModerationLink");
   const signOutButton = qs("#settingsSignOut");
+  const avatarButton = qs("#settingsAvatarButton");
+  const avatarInput = qs("#settingsAvatarInput");
   const pushButton = qs("#pushNotificationButton");
   const pushSummary = qs("#pushNotificationSummary");
   const pushStatus = qs("#pushNotificationStatus");
@@ -7159,6 +7176,14 @@ async function initSettings(user, profile) {
   }
   dashboardLink?.classList.remove("hidden");
   moderationLink?.classList.toggle("hidden", profile.role !== "admin");
+
+  function paintAvatar(nextUrl = profile.photoURL || DEFAULT_AVATAR) {
+    if (!avatar) {
+      return;
+    }
+    avatar.src = nextUrl || DEFAULT_AVATAR;
+    avatar.alt = profileDisplayName(profile);
+  }
 
   function paintUsernameHelpText(currentProfile) {
     if (!usernameHelp) {
@@ -7211,8 +7236,59 @@ async function initSettings(user, profile) {
 
   paintUsernameHelpText(profile);
   paintPushControls().catch(() => {});
+  paintAvatar(profile.photoURL || DEFAULT_AVATAR);
   usernameInput?.addEventListener("blur", () => {
     usernameInput.value = normalizeUsernameValue(usernameInput.value);
+  });
+
+  avatarButton?.addEventListener("click", () => {
+    avatarInput?.click();
+  });
+
+  avatarInput?.addEventListener("change", async (event) => {
+    const file = event.target.files?.[0];
+    if (!file) {
+      return;
+    }
+
+    const submitButton = qs('button[type="submit"]', form);
+    if (submitButton) {
+      submitButton.disabled = true;
+    }
+    if (avatarButton) {
+      avatarButton.disabled = true;
+    }
+    setStatus(status, "");
+
+    try {
+      validateAvatarUploadFile(file);
+      const uploaded = await uploadFile(file, "profile-avatars", user.uid);
+      const nextPhotoURL = uploaded.url;
+      await updateDoc(doc(db, "users", user.uid), {
+        photoURL: nextPhotoURL,
+        updatedAt: Timestamp.now(),
+      });
+      if (auth.currentUser) {
+        await updateProfile(auth.currentUser, {
+          photoURL: nextPhotoURL,
+        });
+      }
+      profile.photoURL = nextPhotoURL;
+      writeCachedProfile(user.uid, profile);
+      paintAvatar(nextPhotoURL);
+      setStatus(status, "Profile picture updated.", "success");
+    } catch (error) {
+      console.error(error);
+      setStatus(status, error.message || "Avatar upload failed.", "error");
+    } finally {
+      avatarInput.value = "";
+      if (submitButton) {
+        submitButton.disabled = false;
+      }
+      if (avatarButton) {
+        avatarButton.disabled = false;
+      }
+    }
   });
 
   pushButton?.addEventListener("click", async () => {
@@ -7308,6 +7384,9 @@ async function initSettings(user, profile) {
       profile.bio = nextBio || defaultBio();
       if (usernameResult.changed) {
         profile.usernameUpdatedAt = Timestamp.now();
+      }
+      if (auth.currentUser?.photoURL) {
+        profile.photoURL = auth.currentUser.photoURL;
       }
       writeCachedProfile(user.uid, profile);
       setText(name, nextDisplayName);

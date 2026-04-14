@@ -27,5 +27,12 @@ service firebase.storage {
       allow write: if signedInFor(uid)
         && request.resource.size <= 5 * 1024 * 1024;
     }
+
+    match /profile-avatars/{uid}/{allPaths=**} {
+      allow read: if true;
+      allow write: if signedInFor(uid)
+        && isImageUpload()
+        && request.resource.size <= 5 * 1024 * 1024;
+    }
   }
 }
