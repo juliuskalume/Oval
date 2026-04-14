@@ -5580,26 +5580,26 @@ async function initCreatePost(user, profile) {
       note: "Use commas after each closing \" to add more items.",
       posts: [
         {
-          title: "Enter opportunity title here",
+          title: "What is the opportunity title?",
           description: "Write a short summary here. You can include hashtags like #remote or #design.",
-          detailsUrl: "https://example.com/opportunities/your-role",
-          category: "Job",
-          workStyle: "Remote",
-          location: "Remote",
-          compensation: "Paid",
-          openingAt: "2026-05-01",
-          deadline: "2026-05-31",
+          detailsUrl: "Paste the public details URL here, for example https://example.com/opportunities/your-role",
+          category: "Can be a Job, Scholarship, Internship, Gig, etc.",
+          workStyle: "Is it Remote, In-person, Hybrid, Remote-friendly, or Global?",
+          location: "Where is it based? If remote, write Remote.",
+          compensation: "Is it paid? Example: $5000/month, Paid, or Fully funded.",
+          openingAt: "When does it open? Example: 2026-05-01",
+          deadline: "When does it close? Example: 2026-05-31",
           eligibility: [
-            "Eligibility item here",
+            "Who can apply? Add one requirement per line.",
           ],
           requirements: [
-            "Requirement item here",
+            "What skills or experience are required? Add one per line.",
           ],
           responsibilities: [
-            "Responsibility item here",
+            "What will the person do? Add one responsibility per line.",
           ],
           perks: [
-            "Perk item here",
+            "What benefits are included? Add one perk per line.",
           ],
           aboutCompany: "Add a short company or creator description here.",
           allowComments: true,
