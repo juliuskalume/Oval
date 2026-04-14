@@ -59,7 +59,7 @@ The auto-approval flow runs in [api/review-opportunity.js](api/review-opportunit
 
 If the moderation endpoint is unavailable, Oval falls back to manual admin review for new submissions. Live post edits by non-admins intentionally do not bypass that server review path.
 
-Expired published posts are hidden immediately by the client once their deadline passes, and Vercel also runs a daily production cron to flip their Firestore status to `archived` automatically. Both the archival job and reminder job accept Vercel cron requests or an authenticated Firebase admin bearer token, so there is no separate cron secret to manage.
+Expired published posts are hidden immediately by the client once their deadline passes, and Vercel also runs daily production crons to flip their Firestore status to `archived` automatically and process reminder notifications. Both jobs accept Vercel cron requests or an authenticated Firebase admin bearer token, so there is no separate cron secret to manage. On Vercel Hobby, cron jobs must run no more than once per day.
 
 Push notifications are sent for inbox activity and reminders when device/browser tokens are registered. The PWA uses Firebase Cloud Messaging plus a VAPID key, and the Android wrapper uses native Firebase Messaging.
 

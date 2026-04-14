@@ -3,7 +3,7 @@
   "crons": [
     {
       "path": "/api/process-reminders",
-      "schedule": "7 * * * *"
+      "schedule": "7 1 * * *"
     },
     {
       "path": "/api/archive-expired-opportunities",
