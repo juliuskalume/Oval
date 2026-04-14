@@ -5,8 +5,12 @@ service cloud.firestore {
       return request.auth != null;
     }
 
+    function verifiedSignedIn() {
+      return signedIn() && request.auth.token.email_verified == true;
+    }
+
     function currentUserExists() {
-      return signedIn() && exists(/databases/$(database)/documents/users/$(request.auth.uid));
+      return verifiedSignedIn() && exists(/databases/$(database)/documents/users/$(request.auth.uid));
     }
 
     function currentRole() {
@@ -14,7 +18,7 @@ service cloud.firestore {
     }
 
     function isBootstrapAdminEmail() {
-      return signedIn()
+      return verifiedSignedIn()
         && request.auth.token.email != null
         && request.auth.token.email.matches('(?i)^(juliuskalume906@gmail\\.com|sentira\\.official@gmail\\.com)$');
     }
@@ -294,13 +298,13 @@ service cloud.firestore {
     }
 
     match /usernames/{username} {
-      allow read: if signedIn();
+      allow read: if verifiedSignedIn();
       allow create: if validUsernameReservation()
         && username == request.resource.data.username
         && (
           isAdmin()
           || (
-            signedIn()
+            verifiedSignedIn()
             && request.resource.data.uid == request.auth.uid
           )
         );
@@ -309,28 +313,28 @@ service cloud.firestore {
         && (
           isAdmin()
           || (
-            signedIn()
+            verifiedSignedIn()
             && resource.data.uid == request.auth.uid
             && request.resource.data.uid == request.auth.uid
           )
         );
       allow delete: if isAdmin()
-        || (signedIn() && resource.data.uid == request.auth.uid);
+        || (verifiedSignedIn() && resource.data.uid == request.auth.uid);
     }
 
     match /accountDeletionRequests/{uid} {
-      allow read: if isAdmin() || (signedIn() && request.auth.uid == uid);
-      allow create, update: if signedIn()
+      allow read: if isAdmin() || (verifiedSignedIn() && request.auth.uid == uid);
+      allow create, update: if verifiedSignedIn()
         && request.auth.uid == uid
         && request.resource.data.uid == uid
         && validDeletionRequest();
-      allow delete: if isAdmin() || (signedIn() && request.auth.uid == uid);
+      allow delete: if isAdmin() || (verifiedSignedIn() && request.auth.uid == uid);
     }
 
     match /users/{uid} {
-      allow read: if signedIn();
+      allow read: if verifiedSignedIn();
 
-      allow create: if signedIn()
+      allow create: if verifiedSignedIn()
         && request.auth.uid == uid
         && validRole(request.resource.data.role)
         && validUsernameValue(request.resource.data.username)
@@ -341,7 +345,7 @@ service cloud.firestore {
 
       allow update: if (isAdmin() && validRole(request.resource.data.role))
         || (
-          signedIn()
+          verifiedSignedIn()
           && request.auth.uid == uid
           && request.resource.data.role == resource.data.role
           && (
@@ -353,49 +357,49 @@ service cloud.firestore {
       allow delete: if isAdmin();
 
       match /states/{opportunityId} {
-        allow read, write: if signedIn() && request.auth.uid == uid;
+        allow read, write: if verifiedSignedIn() && request.auth.uid == uid;
       }
 
       match /notifications/{notificationId} {
-        allow read: if signedIn() && (request.auth.uid == uid || isAdmin());
-        allow create: if signedIn() && validNotificationPayload();
-        allow update: if signedIn() && (request.auth.uid == uid || isAdmin());
+        allow read: if verifiedSignedIn() && (request.auth.uid == uid || isAdmin());
+        allow create: if verifiedSignedIn() && validNotificationPayload();
+        allow update: if verifiedSignedIn() && (request.auth.uid == uid || isAdmin());
         allow delete: if isAdmin();
       }
 
       match /pushTokens/{installationId} {
-        allow read: if isAdmin() || (signedIn() && request.auth.uid == uid);
-        allow create, update: if signedIn()
+        allow read: if isAdmin() || (verifiedSignedIn() && request.auth.uid == uid);
+        allow create, update: if verifiedSignedIn()
           && request.auth.uid == uid
           && validPushTokenPayload(installationId);
-        allow delete: if isAdmin() || (signedIn() && request.auth.uid == uid);
+        allow delete: if isAdmin() || (verifiedSignedIn() && request.auth.uid == uid);
       }
 
       match /following/{targetUid} {
-        allow read: if signedIn();
-        allow create: if signedIn()
+        allow read: if verifiedSignedIn();
+        allow create: if verifiedSignedIn()
           && request.auth.uid == uid
           && uid != targetUid
           && validFollowDoc(targetUid);
-        allow delete: if signedIn() && request.auth.uid == uid;
+        allow delete: if verifiedSignedIn() && request.auth.uid == uid;
       }
 
       match /followers/{followerUid} {
-        allow read: if signedIn();
-        allow create: if signedIn()
+        allow read: if verifiedSignedIn();
+        allow create: if verifiedSignedIn()
           && request.auth.uid == followerUid
           && followerUid != uid
           && validFollowDoc(followerUid);
-        allow delete: if signedIn() && request.auth.uid == followerUid;
+        allow delete: if verifiedSignedIn() && request.auth.uid == followerUid;
       }
     }
 
     match /opportunities/{opportunityId} {
       allow read: if resource.data.status == 'published'
         || isAdmin()
-        || (signedIn() && resource.data.creatorUid == request.auth.uid);
+        || (verifiedSignedIn() && resource.data.creatorUid == request.auth.uid);
 
-      allow create: if signedIn()
+      allow create: if verifiedSignedIn()
         && request.resource.data.creatorUid == request.auth.uid
         && validOpportunityStatus(request.resource.data.status)
         && (
@@ -406,7 +410,7 @@ service cloud.firestore {
 
       allow update: if isAdmin()
         || (
-          signedIn()
+          verifiedSignedIn()
           && resource.data.creatorUid == request.auth.uid
           && request.resource.data.creatorUid == resource.data.creatorUid
           && (
@@ -418,7 +422,7 @@ service cloud.firestore {
           )
         )
         || (
-          signedIn()
+          verifiedSignedIn()
           && resource.data.status == 'published'
           && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
             'savesCount',
@@ -432,28 +436,28 @@ service cloud.firestore {
         );
 
       allow delete: if isAdmin()
-        || (signedIn() && resource.data.creatorUid == request.auth.uid);
+        || (verifiedSignedIn() && resource.data.creatorUid == request.auth.uid);
 
       match /comments/{commentId} {
         allow read: if get(/databases/$(database)/documents/opportunities/$(opportunityId)).data.status == 'published'
           || isAdmin()
           || (
-            signedIn()
+            verifiedSignedIn()
             && get(/databases/$(database)/documents/opportunities/$(opportunityId)).data.creatorUid == request.auth.uid
           );
-        allow create: if signedIn()
+        allow create: if verifiedSignedIn()
           && get(/databases/$(database)/documents/opportunities/$(opportunityId)).data.status == 'published'
           && get(/databases/$(database)/documents/opportunities/$(opportunityId)).data.allowComments != false
           && validCommentPayload();
         allow update: if isAdmin()
           || (
-            signedIn()
+            verifiedSignedIn()
             && resource.data.authorUid == request.auth.uid
             && validCommentUpdatePayload()
           );
         allow delete: if isAdmin()
           || (
-            signedIn()
+            verifiedSignedIn()
             && resource.data.authorUid == request.auth.uid
           );
       }

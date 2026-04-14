@@ -20,6 +20,8 @@ import {
   orderBy,
   query,
   ref,
+  sendEmailVerification,
+  sendPasswordResetEmail,
   runTransaction,
   setDoc,
   signInWithEmailAndPassword,
@@ -68,6 +70,7 @@ const USERNAME_MIN_LENGTH = 3;
 const USERNAME_MAX_LENGTH = 32;
 const USERNAME_COOLDOWN_MS = 14 * 24 * 60 * 60 * 1000;
 const AUTH_SESSION_PREFIX = "oval.auth.session.";
+const AUTH_NOTICE_KEY = "oval.auth.notice";
 const ACCOUNT_DELETION_REASON_MAX_LENGTH = 300;
 const PUSH_INSTALLATION_KEY = "oval.push.installationId";
 const PUSH_CONFIG_CACHE_KEY = "oval.push.config";
@@ -597,6 +600,27 @@ function isBootstrapAdminEmail(email) {
   return BOOTSTRAP_ADMIN_EMAILS.has(normalizeEmail(email));
 }
 
+function isEmailVerifiedAuthUser(user) {
+  return Boolean(user && user.emailVerified !== false);
+}
+
+async function enforceVerifiedAuthUser(user, { redirect = true, notice = "Verify your email before signing in." } = {}) {
+  if (isEmailVerifiedAuthUser(user)) {
+    return { user, redirected: false };
+  }
+  if (!user) {
+    return { user: null, redirected: false };
+  }
+  await signOut(auth).catch(() => {});
+  setAuthNotice(notice, "error");
+  if (redirect) {
+    setPendingReturnTo(toRelativePath());
+    location.href = `sign-in-email.html?returnTo=${encodeURIComponent(getPendingReturnTo("feed.html"))}`;
+    return { user: null, redirected: true };
+  }
+  return { user: null, redirected: false };
+}
+
 function toRelativePath() {
   return `${location.pathname.split("/").pop() || "feed.html"}${location.search || ""}`;
 }
@@ -619,6 +643,35 @@ function getPendingReturnTo(defaultPath) {
 
 function clearPendingReturnTo() {
   sessionStorage.removeItem(RETURN_TO_KEY);
+}
+
+function setAuthNotice(message, tone = "info") {
+  try {
+    sessionStorage.setItem(AUTH_NOTICE_KEY, JSON.stringify({
+      message: String(message || ""),
+      tone: String(tone || "info"),
+    }));
+  } catch (error) {}
+}
+
+function consumeAuthNotice() {
+  try {
+    const stored = sessionStorage.getItem(AUTH_NOTICE_KEY);
+    if (!stored) {
+      return null;
+    }
+    sessionStorage.removeItem(AUTH_NOTICE_KEY);
+    const parsed = JSON.parse(stored);
+    if (!parsed || typeof parsed !== "object") {
+      return null;
+    }
+    return {
+      message: String(parsed.message || ""),
+      tone: String(parsed.tone || "info"),
+    };
+  } catch (error) {
+    return null;
+  }
 }
 
 function getFeedVideoMutedPreference() {
@@ -2837,11 +2890,14 @@ async function deleteOpportunity(opportunity, user, profile) {
 
 async function requireUserForAction() {
   const user = auth.currentUser || (await withTimeout(authReady, 1500).catch(() => null));
-  if (user) {
-    return user;
+  const verification = await enforceVerifiedAuthUser(user, { redirect: true });
+  if (verification.user) {
+    return verification.user;
   }
-  setPendingReturnTo();
-  location.href = `sign-in-email.html?returnTo=${encodeURIComponent(toRelativePath())}`;
+  if (!verification.redirected) {
+    setPendingReturnTo();
+    location.href = `sign-in-email.html?returnTo=${encodeURIComponent(toRelativePath())}`;
+  }
   throw new Error("Authentication required");
 }
 
@@ -3236,7 +3292,12 @@ async function completeNativeGoogleSignIn(idToken) {
   setStatus(status, "");
   try {
     const credential = await signInWithCredential(auth, GoogleAuthProvider.credential(idToken));
-    const nextProfile = await ensureUserProfile(credential.user);
+    const verification = await enforceVerifiedAuthUser(credential.user, { redirect: false });
+    if (!verification.user) {
+      setStatus(status, "Verify your email before signing in.", "error");
+      return;
+    }
+    const nextProfile = await ensureUserProfile(verification.user);
     redirectAfterAuth(nextProfile);
   } catch (error) {
     console.error(error);
@@ -3297,8 +3358,8 @@ async function initIndex(user, profile) {
 }
 
 async function initOnboarding(user, profile) {
-  if (user && profile) {
-    redirectAfterAuth(profile);
+  if (user) {
+    redirectAfterAuth(profile || fallbackProfileFromUser(user, readCachedProfile(user.uid)));
     return;
   }
   applySkipLinks(document);
@@ -3311,8 +3372,10 @@ async function initOnboarding(user, profile) {
 }
 
 async function initEmailAuth(user, profile) {
-  if (user && profile) {
-    redirectAfterAuth(profile);
+  const verification = await enforceVerifiedAuthUser(user, { redirect: false });
+  user = verification.user;
+  if (user) {
+    redirectAfterAuth(profile || fallbackProfileFromUser(user, readCachedProfile(user.uid)));
     return;
   }
 
@@ -3331,7 +3394,14 @@ async function initEmailAuth(user, profile) {
   const subtitle = qs("#emailAuthSubtitle");
   const submit = qs("#emailAuthSubmit");
   const status = qs("#emailAuthStatus");
+  const resetButton = qs("#passwordResetButton");
+  const resendButton = qs("#resendVerificationButton");
   let mode = "signin";
+
+  const authNotice = consumeAuthNotice();
+  if (authNotice?.message) {
+    setStatus(status, authNotice.message, authNotice.tone || "info");
+  }
 
   function paint() {
     const isCreate = mode === "create";
@@ -3345,9 +3415,12 @@ async function initEmailAuth(user, profile) {
     });
     title.textContent = isCreate ? "Create your account" : "Sign in with email";
     subtitle.textContent = isCreate
-      ? "Create your Oval account with email and password."
+      ? "Create your Oval account with email and password. We'll verify your email before sign-in."
       : "Access saved posts, applied opportunities, and posting tools.";
     submit.textContent = isCreate ? "Create account" : "Sign in";
+    qsa("[data-signin-only]").forEach((node) => {
+      node.classList.toggle("hidden", isCreate);
+    });
   }
 
   modeButtons.forEach((button) => {
@@ -3377,12 +3450,38 @@ async function initEmailAuth(user, profile) {
         }
         const credential = await createUserWithEmailAndPassword(auth, email, password);
         await updateProfile(credential.user, { displayName });
-        const nextProfile = await ensureUserProfile(credential.user, { displayName });
-        redirectAfterAuth(nextProfile);
+        let verificationError = null;
+        try {
+          await sendEmailVerification(credential.user);
+        } catch (error) {
+          verificationError = error;
+        }
+        await signOut(auth).catch(() => {});
+        if (verificationError) {
+          throw verificationError;
+        }
+        setStatus(status, "Verification email sent. Verify your email before signing in.", "success");
+        form.querySelector("#password").value = "";
+        mode = "signin";
+        paint();
         return;
       }
 
       const credential = await signInWithEmailAndPassword(auth, email, password);
+      if (!credential.user.emailVerified) {
+        let verificationError = null;
+        try {
+          await sendEmailVerification(credential.user);
+        } catch (error) {
+          verificationError = error;
+        }
+        await signOut(auth).catch(() => {});
+        if (verificationError) {
+          throw verificationError;
+        }
+        setStatus(status, "We sent a verification email. Verify your email before signing in.", "info");
+        return;
+      }
       const nextProfile = await ensureUserProfile(credential.user);
       redirectAfterAuth(nextProfile);
     } catch (error) {
@@ -3390,6 +3489,71 @@ async function initEmailAuth(user, profile) {
       setStatus(status, error.message || "Authentication failed.", "error");
     } finally {
       submit.disabled = false;
+    }
+  });
+
+  resendButton?.addEventListener("click", async () => {
+    if (mode === "create") {
+      return;
+    }
+    const formData = new FormData(form);
+    const email = String(formData.get("email") || "").trim();
+    const password = String(formData.get("password") || "").trim();
+    if (!email) {
+      setStatus(status, "Enter your email first.", "error");
+      return;
+    }
+    if (!password) {
+      setStatus(status, "Enter your password to resend verification.", "error");
+      return;
+    }
+
+    resendButton.disabled = true;
+    setStatus(status, "");
+    try {
+      const credential = await signInWithEmailAndPassword(auth, email, password);
+      if (credential.user.emailVerified) {
+        const nextProfile = await ensureUserProfile(credential.user);
+        redirectAfterAuth(nextProfile);
+        return;
+      }
+      let verificationError = null;
+      try {
+        await sendEmailVerification(credential.user);
+      } catch (error) {
+        verificationError = error;
+      }
+      await signOut(auth).catch(() => {});
+      if (verificationError) {
+        throw verificationError;
+      }
+      setStatus(status, "Verification email resent. Check your inbox.", "success");
+    } catch (error) {
+      console.error(error);
+      setStatus(status, error.message || "Could not resend verification email.", "error");
+    } finally {
+      resendButton.disabled = false;
+    }
+  });
+
+  resetButton?.addEventListener("click", async () => {
+    const formData = new FormData(form);
+    const email = String(formData.get("email") || "").trim();
+    if (!email) {
+      setStatus(status, "Enter your email first.", "error");
+      return;
+    }
+
+    resetButton.disabled = true;
+    setStatus(status, "");
+    try {
+      await sendPasswordResetEmail(auth, email);
+      setStatus(status, "Password reset email sent.", "success");
+    } catch (error) {
+      console.error(error);
+      setStatus(status, error.message || "Could not send reset email.", "error");
+    } finally {
+      resetButton.disabled = false;
     }
   });
 
@@ -3415,7 +3579,12 @@ function bindGoogleAuth() {
         return;
       }
       const credential = await signInWithPopup(auth, googleProvider);
-      const nextProfile = await ensureUserProfile(credential.user);
+      const verification = await enforceVerifiedAuthUser(credential.user, { redirect: false });
+      if (!verification.user) {
+        setStatus(status, "Verify your email before signing in.", "error");
+        return;
+      }
+      const nextProfile = await ensureUserProfile(verification.user);
       redirectAfterAuth(nextProfile);
     } catch (error) {
       console.error(error);
@@ -7253,10 +7422,15 @@ async function initDeleteAccount(user, profile) {
 }
 
 async function main() {
-  const user = await withTimeout(authReady, 1500).catch(() => null);
+  let user = await withTimeout(authReady, 1500).catch(() => null);
   installTouchHaptics();
   installNativeGoogleBridge();
   installNativePushBridge();
+  const verification = await enforceVerifiedAuthUser(user, { redirect: page !== "sign-in-email" });
+  user = verification.user;
+  if (verification.redirected) {
+    return;
+  }
   const cachedProfile = user ? readCachedProfile(user.uid) : null;
   let profile = user ? fallbackProfileFromUser(user, cachedProfile) : null;
   let profileRefreshPromise = Promise.resolve(profile);
