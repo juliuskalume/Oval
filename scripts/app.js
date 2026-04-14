@@ -5590,16 +5590,16 @@ async function initCreatePost(user, profile) {
           openingAt: "When does it open? Example: 2026-05-01",
           deadline: "When does it close? Example: 2026-05-31",
           eligibility: [
-            "Who can apply? Add one requirement per line.",
+            "Who can apply? Add commas after the closing quotation marks to include more items.",
           ],
           requirements: [
-            "What skills or experience are required? Add one per line.",
+            "What skills or experience are required? Add commas after the closing quotation marks to include more items.",
           ],
           responsibilities: [
-            "What will the person do? Add one responsibility per line.",
+            "What will the person do? Add commas after the closing quotation marks to include more items.",
           ],
           perks: [
-            "What benefits are included? Add one perk per line.",
+            "What benefits are included? Add commas after the closing quotation marks to include more items.",
           ],
           aboutCompany: "Add a short company or creator description here.",
           allowComments: true,
