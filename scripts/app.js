@@ -5534,6 +5534,7 @@ async function initCreatePost(user, profile) {
   const existingAttachmentsWrap = qs("#existingAttachments");
   const bulkImportJson = qs("#bulkImportJson");
   const bulkImportFile = qs("#bulkImportFile");
+  const bulkImportTemplateButton = qs("#bulkImportTemplateButton");
   const bulkImportButton = qs("#bulkImportButton");
   const bulkImportStatus = qs("#bulkImportStatus");
   const bulkImportResults = qs("#bulkImportResults");
@@ -5572,6 +5573,50 @@ async function initCreatePost(user, profile) {
 
   function setBulkStatus(message, tone = "info") {
     setStatus(bulkImportStatus, message, tone);
+  }
+
+  function buildBulkImportTemplateJson() {
+    return JSON.stringify({
+      posts: [
+        {
+          title: "Enter opportunity title here",
+          description: "Write a short summary here. You can include hashtags like #remote or #design.",
+          detailsUrl: "https://example.com/opportunities/your-role",
+          category: "Job",
+          workStyle: "Remote",
+          location: "Remote",
+          compensation: "Paid",
+          openingAt: "2026-05-01",
+          deadline: "2026-05-31",
+          eligibility: [
+            "Eligibility item here",
+          ],
+          requirements: [
+            "Requirement item here",
+          ],
+          responsibilities: [
+            "Responsibility item here",
+          ],
+          perks: [
+            "Perk item here",
+          ],
+          aboutCompany: "Add a short company or creator description here.",
+          allowComments: true,
+        },
+      ],
+    }, null, 2);
+  }
+
+  function downloadBulkImportTemplate() {
+    const blob = new Blob([`${buildBulkImportTemplateJson()}\n`], { type: "application/json;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = "oval-bulk-import-template.json";
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
   }
 
   function resetComposerForm() {
@@ -5995,6 +6040,11 @@ async function initCreatePost(user, profile) {
       console.error(error);
       setBulkStatus("That JSON file could not be read.", "error");
     }
+  });
+
+  bulkImportTemplateButton?.addEventListener("click", () => {
+    downloadBulkImportTemplate();
+    setBulkStatus("Template downloaded. Fill it in, then import to drafts.", "success");
   });
 
   bulkImportButton?.addEventListener("click", async () => {
