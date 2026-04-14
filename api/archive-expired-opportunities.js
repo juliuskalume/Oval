@@ -1,5 +1,11 @@
 import { cert, getApps, initializeApp } from "firebase-admin/app";
+import { getAuth } from "firebase-admin/auth";
 import { getFirestore } from "firebase-admin/firestore";
+
+const BOOTSTRAP_ADMIN_EMAILS = new Set([
+  "juliuskalume906@gmail.com",
+  "sentira.official@gmail.com",
+]);
 
 class HttpError extends Error {
   constructor(status, message) {
@@ -46,22 +52,32 @@ function isLocalHost(host) {
   return /^(localhost|127\.0\.0\.1)(:\d+)?$/i.test(String(host || "").trim());
 }
 
-function authorizeCron(request) {
-  const cronSecret = String(process.env.CRON_SECRET || "").trim();
+function isVercelCronRequest(request) {
+  const userAgent = String(request.headers["user-agent"] || "").toLowerCase();
+  const vercelCronHeader = String(request.headers["x-vercel-cron"] || "").toLowerCase();
+  return userAgent.includes("vercel-cron/1.0") || vercelCronHeader === "1" || vercelCronHeader === "true";
+}
+
+async function authorizeRequest(request, auth, db) {
+  if (isVercelCronRequest(request)) {
+    return;
+  }
+
   const authHeader = String(request.headers.authorization || "");
-  if (cronSecret) {
-    if (authHeader !== `Bearer ${cronSecret}`) {
+  const idToken = authHeader.startsWith("Bearer ") ? authHeader.slice(7).trim() : "";
+  if (!idToken) {
+    if (process.env.VERCEL_ENV === "production" && !isLocalHost(request.headers.host)) {
       throw new HttpError(401, "Unauthorized.");
     }
     return;
   }
 
-  if (process.env.VERCEL_ENV === "production") {
-    throw new HttpError(503, "CRON_SECRET is not configured for production cron execution.");
-  }
-
-  if (!isLocalHost(request.headers.host)) {
-    throw new HttpError(401, "Unauthorized.");
+  const decodedToken = await auth.verifyIdToken(idToken);
+  const email = String(decodedToken.email || "").trim().toLowerCase();
+  const profileSnap = await db.collection("users").doc(decodedToken.uid).get();
+  const role = profileSnap.exists ? String(profileSnap.data()?.role || "") : "";
+  if (role !== "admin" && !BOOTSTRAP_ADMIN_EMAILS.has(email)) {
+    throw new HttpError(403, "Admin access required.");
   }
 }
 
@@ -154,9 +170,10 @@ export default async function handler(request, response) {
   }
 
   try {
-    authorizeCron(request);
     const app = getFirebaseApp();
+    const auth = getAuth(app);
     const db = getFirestore(app);
+    await authorizeRequest(request, auth, db);
     const result = await archiveExpiredPublishedOpportunities(db);
     json(response, 200, {
       ok: true,
