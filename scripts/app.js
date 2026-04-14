@@ -789,6 +789,12 @@ function isNativeAndroidShell() {
   return typeof window !== "undefined" && Boolean(window.OvalAndroid);
 }
 
+function nativeBridgeMethod(name) {
+  return typeof window !== "undefined" && typeof window.OvalAndroid?.[name] === "function"
+    ? window.OvalAndroid[name].bind(window.OvalAndroid)
+    : null;
+}
+
 function notificationPermissionStatus() {
   if (isNativeAndroidShell()) {
     return nativePushState.permission || "default";
@@ -805,9 +811,7 @@ function rememberNativePermission(status) {
 }
 
 function nativePushBridgeMethod(name) {
-  return typeof window !== "undefined" && typeof window.OvalAndroid?.[name] === "function"
-    ? window.OvalAndroid[name].bind(window.OvalAndroid)
-    : null;
+  return nativeBridgeMethod(name);
 }
 
 function waitForNativePushPermissionResult() {
