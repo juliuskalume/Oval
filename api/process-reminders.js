@@ -1,6 +1,12 @@
 import { cert, getApps, initializeApp } from "firebase-admin/app";
+import { getAuth } from "firebase-admin/auth";
 import { getFirestore } from "firebase-admin/firestore";
 import { createNotificationAndPush } from "./_lib/push.js";
+
+const BOOTSTRAP_ADMIN_EMAILS = new Set([
+  "juliuskalume906@gmail.com",
+  "sentira.official@gmail.com",
+]);
 
 const DEADLINE_REMINDER_STAGES = [
   { key: "1w", label: "1 week", ms: 7 * 24 * 60 * 60 * 1000 },
@@ -50,16 +56,33 @@ function getFirebaseApp() {
   });
 }
 
-function authorizeCron(request) {
-  const cronSecret = String(process.env.CRON_SECRET || "").trim();
+function isVercelCronRequest(request) {
+  const userAgent = String(request.headers["user-agent"] || "").toLowerCase();
+  const vercelCronHeader = String(request.headers["x-vercel-cron"] || "").toLowerCase();
+  return userAgent.includes("vercel-cron/1.0") || vercelCronHeader === "1" || vercelCronHeader === "true";
+}
+
+async function authorizeRequest(request, auth, db) {
+  if (isVercelCronRequest(request)) {
+    return;
+  }
+
   const authHeader = String(request.headers.authorization || "");
-  if (cronSecret) {
-    if (authHeader !== `Bearer ${cronSecret}`) {
+  const idToken = authHeader.startsWith("Bearer ") ? authHeader.slice(7).trim() : "";
+  if (!idToken) {
+    if (process.env.VERCEL_ENV === "production") {
       throw new HttpError(401, "Unauthorized.");
     }
     return;
   }
-  throw new HttpError(503, "CRON_SECRET is required for reminder processing.");
+
+  const decodedToken = await auth.verifyIdToken(idToken);
+  const email = String(decodedToken.email || "").trim().toLowerCase();
+  const profileSnap = await db.collection("users").doc(decodedToken.uid).get();
+  const role = profileSnap.exists ? String(profileSnap.data()?.role || "") : "";
+  if (role !== "admin" && !BOOTSTRAP_ADMIN_EMAILS.has(email)) {
+    throw new HttpError(403, "Admin access required.");
+  }
 }
 
 function toDate(value) {
@@ -224,8 +247,10 @@ export default async function handler(request, response) {
   }
 
   try {
-    authorizeCron(request);
-    const db = getFirestore(getFirebaseApp());
+    const app = getFirebaseApp();
+    const auth = getAuth(app);
+    const db = getFirestore(app);
+    await authorizeRequest(request, auth, db);
     const now = new Date();
     const stats = {
       openingReminders: 0,

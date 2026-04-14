@@ -56,11 +56,10 @@ The auto-approval flow runs in [api/review-opportunity.js](api/review-opportunit
 - `OVAL_FIREBASE_PRIVATE_KEY`
 - `OVAL_FIREBASE_VAPID_KEY` for web push in the PWA
 - `OVAL_APP_BASE_URL` (recommended, for push notification links)
-- `CRON_SECRET` for scheduled reminder processing on [api/process-reminders.js](api/process-reminders.js)
 
 If the moderation endpoint is unavailable, Oval falls back to manual admin review for new submissions. Live post edits by non-admins intentionally do not bypass that server review path.
 
-Expired published posts are hidden immediately by the client once their deadline passes, and Vercel also runs a daily production cron to flip their Firestore status to `archived` automatically. That archival endpoint accepts Vercel cron requests or an authenticated Firebase admin bearer token, so it does not depend on `CRON_SECRET`.
+Expired published posts are hidden immediately by the client once their deadline passes, and Vercel also runs a daily production cron to flip their Firestore status to `archived` automatically. Both the archival job and reminder job accept Vercel cron requests or an authenticated Firebase admin bearer token, so there is no separate cron secret to manage.
 
 Push notifications are sent for inbox activity and reminders when device/browser tokens are registered. The PWA uses Firebase Cloud Messaging plus a VAPID key, and the Android wrapper uses native Firebase Messaging.
 
