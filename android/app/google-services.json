@@ -14,14 +14,6 @@
       },
       "oauth_client": [
         {
-          "client_id": "1081321199371-36vedcigq8pv5vleu46qst1rdfahocns.apps.googleusercontent.com",
-          "client_type": 1,
-          "android_info": {
-            "package_name": "com.sentirax.oval",
-            "certificate_hash": "48071ada295eeca106d05668e13ca7ba81106afa"
-          }
-        },
-        {
           "client_id": "1081321199371-m0ku3s4cbkcauasce4hmkcscmmm317i6.apps.googleusercontent.com",
           "client_type": 1,
           "android_info": {
