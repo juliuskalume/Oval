@@ -8,5 +8,8 @@ node_modules/
 android/.gradle/
 android/.gradle-dist/
 android/local.properties
+android/keystore.properties
+android/*.jks
+*.jks
 android/app/build/
 android/build/
