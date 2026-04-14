@@ -5577,6 +5577,7 @@ async function initCreatePost(user, profile) {
 
   function buildBulkImportTemplateJson() {
     return JSON.stringify({
+      note: "Use commas after each closing \" to add more items.",
       posts: [
         {
           title: "Enter opportunity title here",
