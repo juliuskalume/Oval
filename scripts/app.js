@@ -4909,6 +4909,8 @@ async function initComments(user, profile) {
   const gate = qs("#commentsComposerGate");
   const form = qs("#commentForm");
   const replyBanner = qs("#commentReplyBanner");
+  const commentsScroll = qs("#commentsScroll");
+  const commentsComposer = qs("#commentsComposer");
   const textarea = qs("#commentBody");
   const count = qs("#commentCount");
   const hint = qs("#commentHint");
@@ -4919,6 +4921,48 @@ async function initComments(user, profile) {
   let editTarget = null;
   const expandedReplyIds = new Set();
   let targetCommentFocused = false;
+  let commentComposerFocused = false;
+
+  function syncCommentsKeyboardLayout() {
+    const shell = qs(".phone");
+    if (!shell || !commentsComposer) {
+      return;
+    }
+
+    const composerHeight = Math.ceil(commentsComposer.getBoundingClientRect().height || 0);
+    let keyboardOffset = 0;
+    if (commentComposerFocused && window.visualViewport) {
+      const viewport = window.visualViewport;
+      const layoutHeight = window.innerHeight || document.documentElement.clientHeight || 0;
+      keyboardOffset = Math.max(0, Math.round(layoutHeight - viewport.height - viewport.offsetTop));
+    }
+
+    shell.style.setProperty("--comments-composer-height", `${composerHeight}px`);
+    shell.style.setProperty("--comments-keyboard-offset", `${keyboardOffset}px`);
+
+    if (!commentComposerFocused || !textarea) {
+      return;
+    }
+
+    window.requestAnimationFrame(() => {
+      const fieldRect = textarea.getBoundingClientRect();
+      const visibleBottom = window.visualViewport
+        ? window.visualViewport.offsetTop + window.visualViewport.height
+        : window.innerHeight;
+      const overlap = fieldRect.bottom - visibleBottom + 16;
+      if (overlap > 0 && commentsScroll) {
+        commentsScroll.scrollBy({ top: overlap, behavior: "smooth" });
+      }
+    });
+  }
+
+  if (commentsComposer && "ResizeObserver" in window) {
+    const composerObserver = new ResizeObserver(syncCommentsKeyboardLayout);
+    composerObserver.observe(commentsComposer);
+  }
+  window.visualViewport?.addEventListener("resize", syncCommentsKeyboardLayout);
+  window.visualViewport?.addEventListener("scroll", syncCommentsKeyboardLayout);
+  window.addEventListener("resize", syncCommentsKeyboardLayout);
 
   if (backLink) {
     const fallbackHref = detailsUrl(opportunity.id);
@@ -4946,6 +4990,7 @@ async function initComments(user, profile) {
     textarea.style.height = "auto";
     textarea.style.height = `${Math.min(textarea.scrollHeight, 140)}px`;
     count.textContent = `${textarea.value.length}/${MAX_COMMENT_LENGTH}`;
+    syncCommentsKeyboardLayout();
   }
 
   function paintHeading() {
@@ -5243,6 +5288,15 @@ async function initComments(user, profile) {
     textarea?.focus();
   });
 
+  textarea?.addEventListener("focus", () => {
+    commentComposerFocused = true;
+    syncCommentsKeyboardLayout();
+    window.setTimeout(syncCommentsKeyboardLayout, 280);
+  });
+  textarea?.addEventListener("blur", () => {
+    commentComposerFocused = false;
+    window.setTimeout(syncCommentsKeyboardLayout, 80);
+  });
   textarea?.addEventListener("input", syncComposerCount);
 
   form?.addEventListener("submit", async (event) => {
