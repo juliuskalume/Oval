@@ -3422,6 +3422,20 @@ async function initEmailAuth(user, profile) {
     setStatus(status, authNotice.message, authNotice.tone || "info");
   }
 
+  function normalizeVerificationError(error) {
+    const code = String(error?.code || "");
+    const message = String(error?.message || "");
+    const transientCodes = new Set([
+      "auth/network-request-failed",
+      "auth/internal-error",
+      "auth/too-many-requests",
+    ]);
+    if (transientCodes.has(code) || message.includes("error-code:-26") || message.includes("503")) {
+      return new Error("We couldn't send the verification email right now. Please wait a minute and try again.");
+    }
+    return error instanceof Error ? error : new Error("Could not send verification email.");
+  }
+
   function paint() {
     const isCreate = mode === "create";
     modeButtons.forEach((button) => {
@@ -3473,7 +3487,7 @@ async function initEmailAuth(user, profile) {
         try {
           await sendEmailVerification(credential.user);
         } catch (error) {
-          verificationError = error;
+          verificationError = normalizeVerificationError(error);
         }
         await signOut(auth).catch(() => {});
         if (verificationError) {
@@ -3492,7 +3506,7 @@ async function initEmailAuth(user, profile) {
         try {
           await sendEmailVerification(credential.user);
         } catch (error) {
-          verificationError = error;
+          verificationError = normalizeVerificationError(error);
         }
         await signOut(auth).catch(() => {});
         if (verificationError) {
@@ -3540,7 +3554,7 @@ async function initEmailAuth(user, profile) {
       try {
         await sendEmailVerification(credential.user);
       } catch (error) {
-        verificationError = error;
+        verificationError = normalizeVerificationError(error);
       }
       await signOut(auth).catch(() => {});
       if (verificationError) {
