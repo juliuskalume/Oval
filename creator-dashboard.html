@@ -50,9 +50,12 @@
       </div>
 
       <div class="rounded-3xl bg-white/5 border border-white/10 p-4">
-        <div class="flex items-center justify-between">
-          <h2 class="font-semibold">Your opportunities</h2>
-          <span class="material-symbols-outlined">insights</span>
+        <div class="flex items-center justify-between gap-3">
+          <div>
+            <h2 class="font-semibold">Your opportunities</h2>
+            <p id="dashboardDraftCount" class="text-xs text-white/50 mt-1">No drafts ready to post</p>
+          </div>
+          <button id="postAllDraftsButton" type="button" class="hidden rounded-2xl bg-white px-4 py-2 text-sm font-semibold text-black disabled:opacity-50">Post all drafts</button>
         </div>
         <div id="dashboardPosts" class="space-y-3 mt-4"></div>
       </div>

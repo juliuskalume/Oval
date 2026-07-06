@@ -1585,6 +1585,33 @@ function opportunityDraftToFirestorePayload(draft, status) {
   return payload;
 }
 
+function opportunityToDraftPayload(opportunity) {
+  return {
+    title: opportunity.title || "",
+    caption: opportunity.caption || "",
+    applyUrl: opportunity.applyUrl || "",
+    category: opportunity.category || "Internship",
+    locationLabel: opportunity.locationLabel || "",
+    workMode: opportunity.workMode || "Remote",
+    payLabel: opportunity.payLabel || "",
+    openingAt: toDate(opportunity.openingAt)?.toISOString() || null,
+    deadlineAt: toDate(opportunity.deadlineAt || opportunity.deadline)?.toISOString(),
+    tags: Array.isArray(opportunity.tags) ? opportunity.tags : extractHashtags(opportunity.caption || ""),
+    eligibility: Array.isArray(opportunity.eligibility) ? opportunity.eligibility : [],
+    responsibilities: Array.isArray(opportunity.responsibilities) ? opportunity.responsibilities : [],
+    requirements: Array.isArray(opportunity.requirements) ? opportunity.requirements : [],
+    perks: Array.isArray(opportunity.perks) ? opportunity.perks : [],
+    aboutCompany: opportunity.aboutCompany || "",
+    allowComments: Boolean(opportunity.allowComments),
+    media: opportunity.media || { url: DEFAULT_COVER, alt: opportunity.title || "Opportunity cover" },
+    attachments: Array.isArray(opportunity.attachments) ? opportunity.attachments : [],
+    creatorUid: opportunity.creatorUid || "",
+    creatorName: opportunity.creatorName || "",
+    creatorHandle: opportunity.creatorHandle || "",
+    creatorPhotoURL: opportunity.creatorPhotoURL || DEFAULT_AVATAR,
+  };
+}
+
 async function submitOpportunityReviewRequest({ user, mode, opportunityId, payload, visualModerationFrames = [] }) {
   const idToken = await user.getIdToken();
   let response;
@@ -6571,6 +6598,8 @@ async function initCreatorDashboard(user, profile) {
 
   const postsList = qs("#dashboardPosts");
   const status = qs("#dashboardStatus");
+  const postAllDraftsButton = qs("#postAllDraftsButton");
+  const draftCountLabel = qs("#dashboardDraftCount");
 
   function syncSummary() {
     const totalViews = myPosts.reduce((sum, item) => sum + Number(item.viewsCount || 0), 0);
@@ -6588,7 +6617,18 @@ async function initCreatorDashboard(user, profile) {
     setText("#funnelAppliedValue", formatCompact(totalApplications));
   }
 
+  function syncDraftActions() {
+    const drafts = myPosts.filter((item) => item.status === "draft");
+    if (draftCountLabel) {
+      draftCountLabel.textContent = drafts.length
+        ? `${drafts.length} draft${drafts.length === 1 ? "" : "s"} ready to post`
+        : "No drafts ready to post";
+    }
+    postAllDraftsButton?.classList.toggle("hidden", !drafts.length);
+  }
+
   function renderPosts() {
+    syncDraftActions();
     if (!myPosts.length) {
       postsList.innerHTML =
         '<div class="rounded-3xl bg-white/5 border border-white/10 p-6 text-sm text-white/60">You have not posted any opportunities yet.</div>';
@@ -6621,6 +6661,103 @@ async function initCreatorDashboard(user, profile) {
 
   syncSummary();
   renderPosts();
+
+  postAllDraftsButton?.addEventListener("click", async () => {
+    const drafts = myPosts.filter((item) => item.status === "draft");
+    if (!drafts.length) {
+      return;
+    }
+    const confirmed = await confirmAction({
+      title: "Post all drafts?",
+      message: profile.role === "admin"
+        ? `This will publish ${drafts.length} draft${drafts.length === 1 ? "" : "s"} now.`
+        : `This will submit ${drafts.length} draft${drafts.length === 1 ? "" : "s"} for review. Approved drafts will go live automatically.`,
+      confirmLabel: "Post all",
+      cancelLabel: "Cancel",
+      tone: "default",
+    });
+    if (!confirmed) {
+      return;
+    }
+
+    postAllDraftsButton.disabled = true;
+    setStatus(status, `Posting ${drafts.length} draft${drafts.length === 1 ? "" : "s"}...`, "info");
+    let postedCount = 0;
+    let pendingCount = 0;
+    const failures = [];
+
+    for (const draft of drafts) {
+      try {
+        const draftPayload = opportunityToDraftPayload(draft);
+        if (!draftPayload.title || !draftPayload.caption || !draftPayload.applyUrl || !draftPayload.deadlineAt) {
+          throw new Error("Missing required title, description, details URL, or deadline.");
+        }
+        let nextStatus = profile.role === "admin" ? "published" : "pending";
+        let review = draft.review;
+
+        if (profile.role !== "admin") {
+          const reviewResult = await submitOpportunityReviewRequest({
+            user,
+            mode: "update",
+            opportunityId: draft.id,
+            payload: draftPayload,
+          });
+          if (!reviewResult?.unavailable) {
+            nextStatus = reviewResult?.status || "pending";
+            review = reviewResult.review || review;
+          } else {
+            review = {
+              source: "client-fallback",
+              decision: "manual_review",
+              summary: "Automatic review was unavailable, so this submission was routed to admin review.",
+              confidence: "low",
+              flags: ["Automatic review endpoint unavailable."],
+              checkedAt: Timestamp.now(),
+              urlVerified: false,
+            };
+          }
+        }
+
+        const payload = opportunityDraftToFirestorePayload(draftPayload, nextStatus);
+        if (review) {
+          payload.review = review;
+        }
+        await updateDoc(doc(db, "opportunities", draft.id), payload);
+        Object.assign(draft, payload);
+        if (nextStatus === "published") {
+          postedCount += 1;
+        } else {
+          pendingCount += 1;
+          if (profile.role !== "admin") {
+            notifyAdmins({
+              type: "opportunity-pending-review",
+              title: "New post pending approval",
+              body: `${draftPayload.title} is waiting for review.`,
+              opportunityId: draft.id,
+              profileUid: user.uid,
+            }).catch((error) => {
+              console.warn("Pending approval notification failed.", error);
+            });
+          }
+        }
+      } catch (error) {
+        console.error(error);
+        failures.push(`${draft.title || "Untitled draft"}: ${error.message || "Posting failed."}`);
+      }
+    }
+
+    syncSummary();
+    renderPosts();
+    postAllDraftsButton.disabled = false;
+    const postedMessage = postedCount ? `${postedCount} published` : "";
+    const pendingMessage = pendingCount ? `${pendingCount} submitted for review` : "";
+    const successMessage = [postedMessage, pendingMessage].filter(Boolean).join(" and ");
+    if (failures.length) {
+      setStatus(status, `${successMessage || "No drafts posted"}. ${failures.length} failed: ${failures[0]}`, postedCount || pendingCount ? "info" : "error");
+      return;
+    }
+    setStatus(status, `${successMessage || "Drafts posted"}.`, "success");
+  });
 
   postsList?.addEventListener("click", async (event) => {
     const button = event.target.closest("[data-dashboard-delete]");
